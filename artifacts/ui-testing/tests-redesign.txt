@@ -1,0 +1,7 @@
+
+com.example.animepahedl.SearchScreenTest:..
+com.example.animepahedl.LibraryNavigationTest:.
+
+Time: 7.185
+
+OK (3 tests)

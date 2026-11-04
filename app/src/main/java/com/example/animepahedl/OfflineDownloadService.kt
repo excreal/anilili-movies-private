@@ -1,5 +1,6 @@
 package com.example.animepahedl
 
+import androidx.core.content.edit
 import android.app.Notification
 import android.content.Context
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -10,7 +11,8 @@ import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
-import androidx.media3.exoplayer.offline.DownloadNotificationHelper
+import androidx.core.app.NotificationCompat
+import android.text.format.Formatter
 import java.io.File
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.LinkedBlockingQueue
@@ -34,8 +36,25 @@ object OfflineDownloads {
             else { pool.corePoolSize = limit; pool.maximumPoolSize = limit }
         }
     }
+    @Synchronized
+    fun setSimultaneousDownloads(count: Int) {
+        instance?.maxParallelDownloads = count.coerceIn(1, 6)
+    }
     lateinit var cache: SimpleCache
         private set
+
+    /** Called on IO before UI startup; services retain a synchronized fallback. */
+    @Synchronized
+    internal fun prepareCache(context: Context) {
+        if (::cache.isInitialized) return
+        val app = context.applicationContext
+        val database = StandaloneDatabaseProvider(app)
+        val legacy = File(app.filesDir, "offline-media")
+        // Retain pre-update downloads until they have been exported successfully.
+        val directory = if (legacy.exists() && legacy.walkTopDown().any { it.extension == "exo" }) legacy
+            else File(app.getExternalFilesDir(null) ?: app.filesDir, "hls-temp")
+        cache = SimpleCache(directory, NoOpCacheEvictor(), database)
+    }
 
     internal fun retryPending(context: Context, manager: DownloadManager) {
         if (manager.downloadsPaused) return
@@ -44,7 +63,7 @@ object OfflineDownloads {
         manager.downloadIndex.getDownloads(Download.STATE_FAILED).use { cursor ->
             while (cursor.moveToNext()) {
                 val download = cursor.download
-                if (retries.getBoolean(download.request.id, false) && download.stopReason == Download.STOP_REASON_NONE)
+                if (!Exports.deleting(download.request.id) && retries.getBoolean(download.request.id, false) && download.stopReason == Download.STOP_REASON_NONE)
                     requests += download.request
             }
         }
@@ -56,12 +75,20 @@ object OfflineDownloads {
         instance?.let { return it }
         val app = context.applicationContext
         val database = StandaloneDatabaseProvider(app)
-        val legacy = File(app.filesDir, "offline-media")
-        // Retain pre-update downloads until they have been exported successfully.
-        val directory = if (legacy.exists() && legacy.walkTopDown().any { it.extension == "exo" }) legacy
-            else File(app.getExternalFilesDir(null) ?: app.filesDir, "hls-temp")
-        cache = SimpleCache(directory, NoOpCacheEvictor(), database)
-        val factory = OkHttpDataSource.Factory(AnimeNetwork.mediaClient)
+        if (!::cache.isInitialized) prepareCache(app)
+        val transferListener = object : androidx.media3.datasource.TransferListener {
+            private val last = java.util.concurrent.atomic.AtomicLong(0)
+            override fun onTransferInitializing(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+            override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+            override fun onBytesTransferred(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+                if (isNetwork) DownloadSpeed.add(bytesTransferred)
+                val now = android.os.SystemClock.elapsedRealtime()
+                val previous = last.get()
+                if (now - previous >= 250 && last.compareAndSet(previous, now)) updates.tryEmit(Unit)
+            }
+            override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) { updates.tryEmit(Unit) }
+        }
+        val factory = OkHttpDataSource.Factory(AnimeNetwork.mediaClient).setTransferListener(transferListener)
             .setDefaultRequestProperties(mapOf("Referer" to "https://kwik.cx/"))
         val connections = AppSettings(app).connections
         val executor = ThreadPoolExecutor(connections, connections, 30, TimeUnit.SECONDS, LinkedBlockingQueue<Runnable>())
@@ -80,8 +107,7 @@ object OfflineDownloads {
                     }
                     if (challenge != null) {
                         val event = MediaVerification(download.request.id, challenge.url, challenge.browserUrl, System.currentTimeMillis())
-                        app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit()
-                            .putString(event.id, Gson().toJson(event)).apply()
+                        app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { putString(event.id, Gson().toJson(event)) }
                         DebugTrace.event("media_challenge", "url" to DebugTrace.safeUrl(challenge.url))
                     }
                     if (finalException != null) DebugTrace.event("media_failed", "type" to finalException.javaClass.simpleName,
@@ -92,7 +118,7 @@ object OfflineDownloads {
                     val http = causes.filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>().firstOrNull()
                     if (download.state == Download.STATE_FAILED && challenge == null &&
                         causes.any { it is java.io.IOException } && (http == null || http.responseCode == 408 || http.responseCode == 429 || http.responseCode >= 500)) {
-                        retries.edit().putBoolean(download.request.id, true).apply()
+                        retries.edit { putBoolean(download.request.id, true) }
                         DownloadRetryService.schedule(app)
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             val current = manager.downloadIndex.getDownload(download.request.id)
@@ -102,9 +128,9 @@ object OfflineDownloads {
                     }
                     if (download.state == Download.STATE_COMPLETED || download.state == Download.STATE_REMOVING ||
                         (download.state == Download.STATE_FAILED && (challenge != null || (http != null && http.responseCode in 400..499 && http.responseCode != 408 && http.responseCode != 429))))
-                        retries.edit().remove(download.request.id).apply()
-                    if (download.state == Download.STATE_COMPLETED) {
-                        app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit().remove(download.request.id).apply()
+                        retries.edit { remove(download.request.id) }
+                    if (download.state == Download.STATE_COMPLETED && !Exports.deleting(download.request.id)) {
+                        app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { remove(download.request.id) }
                         if (!Exports.all(app).containsKey(download.request.id))
                             Exports.prepare(app, download.request.id, String(download.request.data))
                         Exports.start(app)
@@ -112,8 +138,9 @@ object OfflineDownloads {
                     updates.tryEmit(Unit)
                 }
             })
+            it.setRequirements(androidx.media3.exoplayer.scheduler.Requirements(if (AppSettings(app).unmeteredOnly) androidx.media3.exoplayer.scheduler.Requirements.NETWORK_UNMETERED else androidx.media3.exoplayer.scheduler.Requirements.NETWORK))
             it.minRetryCount = 10
-            it.maxParallelDownloads = 2
+            it.maxParallelDownloads = AppSettings(app).simultaneousDownloads
             it.resumeDownloads()
             instance = it
         }
@@ -133,7 +160,7 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
     override fun onCreate() {
         super.onCreate()
         // A foreground service alone does not keep the CPU awake on aggressive OEM builds.
-        if (!wakeLock.isHeld) wakeLock.acquire()
+        if (!wakeLock.isHeld) wakeLock.acquire(6 * 60 * 60_000L)
     }
 
     override fun onDestroy() {
@@ -145,13 +172,33 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
     override fun getScheduler(): Scheduler = androidx.media3.exoplayer.scheduler.PlatformScheduler(this, 10)
     override fun onTimeout(startId: Int, fgsType: Int) {
         // Android 15+ limits data-sync foreground-service runtime.
+        DownloadStore.operation("transfer", "service-timeout", "Android stopped background downloads at its time limit. Reopen the app and resume paused downloads.")
         OfflineDownloads.manager(this).pauseDownloads()
         stopSelf()
     }
-    override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification =
-        DownloadNotificationHelper(this, "downloads").buildProgressNotification(
-            this, android.R.drawable.stat_sys_download, null, "Animepahe DL · Offline downloads", downloads, notMetRequirements
-        )
+    override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification {
+        val active = downloads.filter { it.state == Download.STATE_DOWNLOADING }
+        val known = active.map { it.percentDownloaded }.filter { it >= 0f }
+        val percent = if (active.isNotEmpty() && known.size == active.size) known.average().toInt().coerceIn(0, 100) else null
+        val rate = if (active.isEmpty()) { DownloadSpeed.reset(); 0L } else DownloadSpeed.sample()
+        val title = if (active.size == 1) String(active[0].request.data).ifBlank { "Downloading episode" }
+            else if (active.size > 1) "Downloading ${active.size} episodes" else "Downloads"
+        val text = when {
+            notMetRequirements != 0 -> "Waiting for internet"
+            active.isEmpty() -> "Waiting to download"
+            else -> listOfNotNull(percent?.let { if (active.size > 1) "Average $it%" else "$it%" }, rate.takeIf { it > 0 }?.let { "${Formatter.formatShortFileSize(this, it)}/s" }).joinToString(" · ").ifEmpty { "Downloading" }
+        }
+        return NotificationCompat.Builder(this, "downloads")
+            .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text)
+            .setContentIntent(downloadsPendingIntent(this)).setOnlyAlertOnce(true).setOngoing(true)
+            .addAction(0, if (OfflineDownloads.manager(this).downloadsPaused) "Resume HLS" else "Pause HLS",
+                android.app.PendingIntent.getForegroundService(this, 31,
+                    if (OfflineDownloads.manager(this).downloadsPaused) DownloadService.buildResumeDownloadsIntent(this, OfflineDownloadService::class.java, true)
+                    else DownloadService.buildPauseDownloadsIntent(this, OfflineDownloadService::class.java, true),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+            .setProgress(100, percent ?: 0, percent == null).build()
+    }
+
 }
 
 /** A persisted job survives process death between a transient failure and its delayed retry. */

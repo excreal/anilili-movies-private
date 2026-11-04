@@ -31,7 +31,17 @@ data class Anime(
 
 data class Episode(val session: String, val number: String, val snapshot: String, val duration: String)
 data class AnimeDetails(val anime: Anime, val episodes: List<Episode>)
-class VerificationRequired(val url: String, val browserUrl: String = url) : IOException("${url.toHttpUrl().host} requires manual verification.")
+/** Verification always opens a human-readable page, never a JSON endpoint. */
+internal fun verificationPage(url: String, referer: String? = null): String {
+    val target = url.toHttpUrl()
+    if (target.pathSegments.none { it.equals("api", true) }) return url
+    val fallback = referer?.let { runCatching { it.toHttpUrl() }.getOrNull() }
+    return if (fallback != null && fallback.host == target.host && fallback.pathSegments.none { it.equals("api", true) })
+        fallback.toString()
+    else target.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
+}
+
+class VerificationRequired(val url: String, val browserUrl: String = verificationPage(url)) : IOException("${url.toHttpUrl().host} requires manual verification.")
 class HttpFailure(val url: String, val browserUrl: String, val status: Int, summary: String) :
     IOException("HTTP $status from ${url.toHttpUrl().host}${url.toHttpUrl().encodedPath}" + if (summary.isBlank()) "" else ": $summary")
 
@@ -39,20 +49,26 @@ object AnimeNetwork {
     const val HOST = "https://animepahe.pw"
     // Updated to match WebView when the user opens the verification screen.
     var userAgent = "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+    val sessionGeneration = java.util.concurrent.atomic.AtomicLong()
+    private val requestGeneration = ThreadLocal<Long>()
+    fun invalidateSession() { sessionGeneration.incrementAndGet(); client.dispatcher.cancelAll(); mediaClient.dispatcher.cancelAll() }
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .cookieJar(object : CookieJar {
             override fun loadForRequest(url: HttpUrl): List<Cookie> =
                 CookieManager.getInstance().getCookie(url.toString()).orEmpty().split(';')
                     .mapNotNull { Cookie.parse(url, it.trim()) }
 
             override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                if (requestGeneration.get() != sessionGeneration.get()) return
                 cookies.forEach { CookieManager.getInstance().setCookie(url.toString(), it.toString()) }
                 CookieManager.getInstance().flush()
             }
         })
         .addInterceptor { chain ->
+            requestGeneration.set(sessionGeneration.get())
             val request = chain.request().newBuilder().header("User-Agent", userAgent)
             if (chain.request().header("Referer") == null) request.header("Referer", "$HOST/")
             chain.proceed(request.build())
@@ -76,12 +92,12 @@ object AnimeNetwork {
     }
 }
 
-class AnimeRepository {
-    suspend fun checkMedia(url: String) = withContext(Dispatchers.IO) {
+open class AnimeRepository {
+    open suspend fun checkMedia(url: String) = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).header("Referer", "https://kwik.cx/").apply {
             if (!url.toHttpUrl().encodedPath.endsWith(".m3u8", true)) header("Range", "bytes=0-1023")
         }.build()
-        AnimeNetwork.mediaClient.newCall(request).execute().use { response ->
+        AnimeNetwork.mediaClient.newCall(request).consumeCancellable { response ->
             if (!response.isSuccessful) throw HttpFailure(url, url, response.code, "Media server rejected the request")
             if (response.header("Content-Type").orEmpty().contains("text/html", true)) {
                 throw IOException("The media URL returned a web page, not a video or HLS playlist.")
@@ -89,16 +105,19 @@ class AnimeRepository {
         }
     }
 
-    private fun request(url: String, referer: String = "${AnimeNetwork.HOST}/", body: String? = null): String {
+    private suspend fun request(url: String, referer: String = "${AnimeNetwork.HOST}/", body: String? = null): String {
         val request = Request.Builder().url(url).header("Referer", referer).apply {
             if (body != null) post(body.toRequestBody("application/json".toMediaType()))
         }.build()
         DebugTrace.event("request", "method" to request.method, "url" to DebugTrace.safeUrl(url))
-        return AnimeNetwork.client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+        return AnimeNetwork.client.newCall(request).consumeCancellable { response ->
+            val text = response.body.source().let { source ->
+                require(!source.request(4L * 1024 * 1024 + 1)) { "Server response exceeds 4 MiB" }
+                source.readUtf8()
+            }
             val finalUrl = response.request.url.toString()
             val challenge = SessionChecks.isChallenge(text, response.header("cf-mitigated"))
-            val browserUrl = if (body == null) finalUrl else referer
+            val browserUrl = verificationPage(if (body == null) finalUrl else referer, referer)
             val summary = if (response.isSuccessful) "" else Jsoup.parse(text).text().take(350)
             DebugTrace.event("response", "url" to DebugTrace.safeUrl(finalUrl), "status" to response.code,
                 "challenge" to challenge, "type" to response.header("Content-Type"), "summary" to summary)
@@ -110,7 +129,7 @@ class AnimeRepository {
         }
     }
 
-    suspend fun search(query: String): List<Anime> = withContext(Dispatchers.IO) {
+    open suspend fun search(query: String): List<Anime> = withContext(Dispatchers.IO) {
         val url = "${AnimeNetwork.HOST}/api".toHttpUrl().newBuilder()
             .addQueryParameter("m", "search").addQueryParameter("q", query).build()
         val result = JsonParser.parseString(request(url.toString())).asJsonObject
@@ -122,13 +141,16 @@ class AnimeRepository {
         }.orEmpty()
     }
 
-    suspend fun details(anime: Anime): AnimeDetails = withContext(Dispatchers.IO) {
+    open suspend fun details(anime: Anime): AnimeDetails = detailsIncremental(anime) {}
+
+    open suspend fun detailsIncremental(anime: Anime, onPage: suspend (AnimeDetails) -> Unit): AnimeDetails = withContext(Dispatchers.IO) {
         val page = "${AnimeNetwork.HOST}/anime/${anime.session}"
         val document = Jsoup.parse(request(page), page)
         val synopsis = document.selectFirst(".anime-synopsis")?.text()
             ?: document.selectFirst("[itemprop=description]")?.text().orEmpty()
         val episodes = mutableListOf<Episode>()
         var current = 1
+        val seenPages = mutableSetOf<String>()
         do {
             coroutineContext.ensureActive()
             val url = "${AnimeNetwork.HOST}/api".toHttpUrl().newBuilder()
@@ -141,26 +163,29 @@ class AnimeRepository {
                 if (row.text("session").isNotBlank()) episodes += Episode(row.text("session"),
                     row.text("episode"), row.text("snapshot"), row.text("duration"))
             }
+            if (rows.size() > 0) require(seenPages.add(rows.toString())) { "Server repeated an episode page" }
+            onPage(AnimeDetails(anime.copy(synopsis = synopsis), episodes.distinctBy { it.session }.toList()))
             val last = result.text("last_page").toIntOrNull()
                 ?: throw IOException("The episode pagination could not be read.")
+            require(last in 1..1000) { "Episode pagination exceeds supported limits" }
             current++
         } while (current <= last)
         AnimeDetails(anime.copy(synopsis = synopsis), episodes.distinctBy { it.session })
     }
 
-    suspend fun poster(session: String): String = withContext(Dispatchers.IO) {
+    open suspend fun poster(session: String): String = withContext(Dispatchers.IO) {
         val page = "${AnimeNetwork.HOST}/anime/$session"
         val doc = Jsoup.parse(request(page), page)
         doc.selectFirst(".anime-poster img")?.absUrl("src")?.takeIf { it.isNotBlank() }
             ?: doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
     }
 
-    suspend fun sources(anime: Anime, episode: Episode): List<EpisodeSource> = withContext(Dispatchers.IO) {
+    open suspend fun sources(anime: Anime, episode: Episode): List<EpisodeSource> = withContext(Dispatchers.IO) {
         val page = "${AnimeNetwork.HOST}/play/${anime.session}/${episode.session}"
         parseEpisodeSources(request(page))
     }
 
-    suspend fun playlist(anime: Anime, episode: Episode, quality: String, audio: String): ResolvedMedia = withContext(Dispatchers.IO) {
+    open suspend fun playlist(anime: Anime, episode: Episode, quality: String, audio: String): ResolvedMedia = withContext(Dispatchers.IO) {
         val playUrl = "${AnimeNetwork.HOST}/play/${anime.session}/${episode.session}"
         val source = selectEpisodeSource(sources(anime, episode), quality, audio)
         fun resolved(url: String) = ResolvedMedia(url, source.quality, source.audio)
@@ -191,11 +216,21 @@ class AnimeRepository {
             }
             val result = request("https://glot.io/api/mux", "https://glot.io/", payload.toString())
             val json = JsonParser.parseString(result)
-            fun strings(value: com.google.gson.JsonElement): List<String> = when {
-                value.isJsonObject -> value.asJsonObject.entrySet().flatMap { strings(it.value) }
-                value.isJsonArray -> value.asJsonArray.flatMap { strings(it) }
-                value.isJsonPrimitive && value.asJsonPrimitive.isString -> listOf(value.asString)
-                else -> emptyList()
+            fun strings(value: com.google.gson.JsonElement): List<String> {
+                val pending = java.util.ArrayDeque<com.google.gson.JsonElement>()
+                val found = mutableListOf<String>()
+                pending.add(value)
+                var inspected = 0
+                while (pending.isNotEmpty()) {
+                    require(++inspected <= 20_000) { "Resolver response is too complex" }
+                    val item = pending.removeFirst()
+                    when {
+                        item.isJsonObject -> item.asJsonObject.entrySet().forEach { pending.addLast(it.value) }
+                        item.isJsonArray -> item.asJsonArray.forEach { pending.addLast(it) }
+                        item.isJsonPrimitive && item.asJsonPrimitive.isString -> found += item.asString
+                    }
+                }
+                return found
             }
             val link = strings(json).firstNotNullOfOrNull(::findMediaUrl)
             if (link != null) return@withContext resolved(link)
@@ -221,8 +256,8 @@ private fun JsonObject.text(key: String): String = get(key)?.takeUnless { it.isJ
 
 enum class ResultSort(val label: String) { RELEVANCE("Relevance"), TITLE("Title A–Z"), NEWEST("Newest"), OLDEST("Oldest") }
 
-fun filterResults(items: List<Anime>, year: String, type: String, sort: ResultSort): List<Anime> {
-    val filtered = items.filter { (year == "All years" || it.year == year) && (type == "All types" || it.type == type) }
+fun sortResults(items: List<Anime>, sort: ResultSort): List<Anime> {
+    val filtered = items
     return when (sort) {
         ResultSort.RELEVANCE -> filtered
         ResultSort.TITLE -> filtered.sortedBy { it.title.lowercase() }

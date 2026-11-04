@@ -11,15 +11,10 @@ class AnimeRepositoryTest {
         Anime("c", "Beta", "", "", "TV", "Airing")
     )
 
-    @Test fun yearAndTypeFiltersCombine() {
-        assertEquals(listOf(items[0]), filterResults(items, "2020", "TV", ResultSort.RELEVANCE))
-        assertEquals(emptyList<Anime>(), filterResults(items, "2024", "TV", ResultSort.RELEVANCE))
-    }
-
     @Test fun sortingPlacesUnknownYearsLast() {
-        assertEquals(listOf("b", "a", "c"), filterResults(items, "All years", "All types", ResultSort.NEWEST).map { it.session })
-        assertEquals(listOf("a", "b", "c"), filterResults(items, "All years", "All types", ResultSort.OLDEST).map { it.session })
-        assertEquals(listOf("b", "c", "a"), filterResults(items, "All years", "All types", ResultSort.TITLE).map { it.session })
+        assertEquals(listOf("b", "a", "c"), sortResults(items, ResultSort.NEWEST).map { it.session })
+        assertEquals(listOf("a", "b", "c"), sortResults(items, ResultSort.OLDEST).map { it.session })
+        assertEquals(listOf("b", "c", "a"), sortResults(items, ResultSort.TITLE).map { it.session })
     }
 
     @Test fun playlistKeepsSignedQueryAndUnescapesSlashes() {

@@ -54,9 +54,8 @@ class HlsExportTest {
 
     @Test fun truncatedExportRetainsCachedMediaForRetry() = verifyExport(1, expectIncomplete = true)
 
-    @Test fun zeroContainerDurationDoesNotRestartExport() = verifyExport(1, directAssembly = true)
+    @Test fun ffmpegOutputPreservesTracksAndDuration() = verifyExport(1, directAssembly = true)
 
-    @Test fun failedPrimaryWriterFallsBackToCompatibilityMp4() = verifyExport(1, forceFallback = true)
 
     @Test fun timestampResetsAcrossDiscontinuitiesKeepEverySegment() = verifyExport(2, repeatPlaylist = true)
 
@@ -69,7 +68,7 @@ class HlsExportTest {
         verifyExport(480, fixture)
     }
 
-    /** Temporary: writes the benchmark export to external storage for container inspection. */
+    /** Writes the benchmark export to external storage for container inspection. */
     @Test fun inspectBenchmarkExport() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext
@@ -79,6 +78,7 @@ class HlsExportTest {
         val base = "https://fixture.invalid/$id/"
         instrumentation.runOnMainSync { OfflineDownloads.manager(app) }
         val cache = OfflineDownloads.cache
+        DownloadStore.operation(id, "delete", "Benchmark owns this fixture")
         try {
             fixture.list()!!.forEach { name ->
                 val bytes = fixture.resolve(name).readBytes()
@@ -96,18 +96,19 @@ class HlsExportTest {
             val started = android.os.SystemClock.elapsedRealtime()
             kotlinx.coroutines.runBlocking {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    assembleCachedHls(app, id, output)
+                    ffmpegRemuxCachedHls(app, id, output) {}
                 }
             }
             android.util.Log.i("HlsExportBenchmark", "inspect elapsed_ms=${android.os.SystemClock.elapsedRealtime() - started} bytes=${output.length()}")
             validateCachedHlsExport(app, id, output)
         } finally {
+            DownloadStore.operation(id, "delete", null)
             (OfflineDownloads.manager(app).downloadIndex as WritableDownloadIndex).removeDownload(id)
             fixture.list()!!.forEach { cache.removeResource(base + it) }
         }
     }
 
-    private fun verifyExport(repetitions: Int, fixture: File? = null, assetFolder: String = "hls-fixture", expectIncomplete: Boolean = false, repeatPlaylist: Boolean = false, forceFallback: Boolean = false, directAssembly: Boolean = false) {
+    private fun verifyExport(repetitions: Int, fixture: File? = null, assetFolder: String = "hls-fixture", expectIncomplete: Boolean = false, repeatPlaylist: Boolean = false, directAssembly: Boolean = false) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext
         val id = "test-hls-export-${System.currentTimeMillis()}"
@@ -116,6 +117,12 @@ class HlsExportTest {
         val cache = OfflineDownloads.cache
         val assets = instrumentation.context.assets
         val resources = fixture?.list()?.toList() ?: assets.list(assetFolder)!!.toList()
+        val earlyWatchdog = java.util.Timer(true)
+        earlyWatchdog.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                File(app.cacheDir, "export-test-stacks.txt").writeText(Thread.getAllStackTraces().entries.joinToString("\n\n") { (thread, stack) -> thread.name + " " + thread.state + "\n" + stack.joinToString("\n") })
+            }
+        }, 10000, 10000)
         try {
             resources.forEach { name ->
                 val bytes = fixture?.resolve(name)?.readBytes() ?: assets.open("$assetFolder/$name").use { it.readBytes() }
@@ -135,23 +142,14 @@ class HlsExportTest {
             }
             val request = DownloadRequest.Builder(id, Uri.parse(base + "index.m3u8"))
                 .setMimeType(MimeTypes.APPLICATION_M3U8).setData("Export test".toByteArray()).build()
+            if (directAssembly) DownloadStore.operation(id, "delete", "Test owns this cached fixture")
             (OfflineDownloads.manager(app).downloadIndex as WritableDownloadIndex).putDownload(
                 Download(request, Download.STATE_COMPLETED, 0, 0, -1, 0, 0))
-            if (!expectIncomplete && !forceFallback && !directAssembly) Exports.put(app, id, ExportRecord("Fixture Show · Episode 1 · 180p · JPN", "", "Animepahe-test", quality = "180p", audio = "jpn", showTitle = "Fixture Show", episodeNumber = "1"))
-            if (forceFallback || directAssembly) {
-                val output = File(app.cacheDir, "$id-fallback.mp4")
+            if (!expectIncomplete && !directAssembly) Exports.put(app, id, ExportRecord("Fixture Show · Episode 1 · 180p · JPN", "", "Animepahe-test", quality = "180p", audio = "jpn", showTitle = "Fixture Show", episodeNumber = "1"))
+            if (directAssembly) {
+                val output = File(app.cacheDir, "$id-remux.mp4")
                 try {
-                    val failedWriter = object : androidx.media3.muxer.Muxer.Factory {
-                        override fun create(path: String): androidx.media3.muxer.Muxer = throw IllegalStateException("Injected writer failure")
-                        override fun getSupportedSampleMimeTypes(trackType: Int) = ExportMuxerFactory().getSupportedSampleMimeTypes(trackType)
-                    }
-                    val stages = mutableListOf<String>()
-                    kotlinx.coroutines.runBlocking {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            assembleCachedHls(app, id, output, if (forceFallback) failedWriter else ExportMuxerFactory(), onStage = { stages += it })
-                        }
-                    }
-                    if (directAssembly) assertFalse("Missing duration metadata must not trigger another export", "Retrying MP4" in stages)
+                    kotlinx.coroutines.runBlocking { ffmpegRemuxCachedHls(app, id, output) {} }
                     validateCachedHlsExport(app, id, output)
                     assertTrue(output.length() > 0)
                     assertTrue(cache.keys.any { it.startsWith(base) })
@@ -200,7 +198,7 @@ class HlsExportTest {
             app.contentResolver.query(Uri.parse(record.uri), arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
                 android.provider.MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)!!.use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals("Fixture Show ep01 180p.mp4", cursor.getString(0))
+                assertEquals("Fixture Show ep01 180p JPN.mp4", cursor.getString(0))
                 assertTrue(cursor.getString(1).endsWith("Animepahe-test/Fixture Show/"))
             }
             val retriever = MediaMetadataRetriever()
@@ -219,6 +217,8 @@ class HlsExportTest {
             while (cache.keys.any { it.startsWith(base) } && System.currentTimeMillis() < cleanupDeadline) Thread.sleep(100)
             assertFalse("Temporary segments should be removed", cache.keys.any { it.startsWith(base) })
         } finally {
+            earlyWatchdog.cancel()
+            DownloadStore.operation(id, "delete", null)
             Exports.all(app)[id]?.uri?.takeIf { it.isNotEmpty() }?.let { app.contentResolver.delete(Uri.parse(it), null, null) }
             Exports.remove(app, id)
             (OfflineDownloads.manager(app).downloadIndex as WritableDownloadIndex).removeDownload(id)

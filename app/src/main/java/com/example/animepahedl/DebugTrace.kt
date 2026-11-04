@@ -10,6 +10,7 @@ import java.io.File
 /** Debug-only metadata. Never writes cookie values, request bodies, or signed URL queries. */
 internal object DebugTrace {
     private var file: File? = null
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor()
     fun initialize(context: Context) {
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             file = File(context.getExternalFilesDir(null) ?: context.filesDir, "captures/http-diagnostics.jsonl")
@@ -17,16 +18,18 @@ internal object DebugTrace {
         }
     }
 
-    fun safeUrl(url: String): String = url.toHttpUrlOrNull()?.newBuilder()?.query(null)?.fragment(null)?.build()?.toString() ?: "invalid-url"
+    fun safeUrl(url: String): String = url.toHttpUrlOrNull()?.newBuilder()?.username("")?.password("")?.encodedPath("/")?.query(null)?.fragment(null)?.build()?.toString() ?: "invalid-url"
 
     @Synchronized
     fun event(name: String, vararg values: Pair<String, Any?>) {
         val destination = file ?: return
-        val line = Gson().toJson(mapOf("time" to System.currentTimeMillis(), "event" to name) + values.toMap())
+        val line = Gson().toJson(mapOf("time" to System.currentTimeMillis(), "event" to name) + values.associate { (key, value) -> key to if (key in setOf("reason", "summary", "message")) "redacted" else value })
         Log.d("AnimepaheHTTP", line)
-        runCatching {
-            if (destination.length() > 1_000_000) destination.writeText("")
-            destination.appendText("$line\n")
+        writer.execute {
+            runCatching {
+                if (destination.length() > 1_000_000) destination.writeText("")
+                destination.appendText("$line\n")
+            }
         }
     }
 }

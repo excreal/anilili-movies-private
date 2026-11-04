@@ -10,3 +10,10 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+# Persistent Gson records must retain constructors and field names in optimized releases.
+-keep class com.example.animepahedl.ExportRecord { *; }
+-keep class com.example.animepahedl.DownloadIdentity { *; }
+-keep class com.example.animepahedl.PreparationRecord { *; }
+-keep class com.example.animepahedl.Anime { *; }
+-keep class com.example.animepahedl.Episode { *; }
+-keep class com.example.animepahedl.MediaVerification { *; }

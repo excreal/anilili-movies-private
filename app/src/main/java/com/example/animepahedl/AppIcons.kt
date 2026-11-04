@@ -10,6 +10,9 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
 internal enum class AppIcon(val path: String) {
+    Expand("M6,9l6,6 6,-6 -1.4,-1.4L12,12.2 7.4,7.6z"),
+    Next("M9,6l6,6 -6,6 -1.4,-1.4L12.2,12 7.6,7.4z"),
+    Info("M12,2a10,10 0,1 0,0 20,10 10,0 0,0 0,-20M11,10h2v7h-2zM11,6h2v2h-2z"),
     Browse("M9.5,3a6.5,6.5 0,1 0,4.1 11.55L20.5,21l1.5,-1.5 -6.45,-6.9A6.5,6.5 0,0 0,9.5 3M9.5,5a4.5,4.5 0,1 1,0 9,4.5 4.5,0 0,1 0,-9"),
     Download("M11,3h2v10l3.5,-3.5L18,11l-6,6 -6,-6 1.5,-1.5L11,13zM5,18v3h14v-3h2v5H3v-5z"),
     Settings("M12,8a4,4 0,1 0,0 8,4 4,0 0,0 0,-8M10,2h4l.6,3 2,.9 2.6,-1.5 2,3.4 -2.2,2v2.4l2.2,2 -2,3.4 -2.6,-1.5 -2,.9 -.6,3h-4l-.6,-3 -2,-.9 -2.6,1.5 -2,-3.4 2.2,-2V9.8l-2.2,-2 2,-3.4 2.6,1.5 2,-.9z"),
@@ -30,6 +33,6 @@ private val vectors = AppIcon.entries.associateWith {
 }
 
 @Composable
-internal fun AppSymbol(icon: AppIcon, description: String? = null, modifier: Modifier = Modifier) {
+internal fun AppSymbol(icon: AppIcon, modifier: Modifier = Modifier, description: String? = null) {
     Icon(vectors.getValue(icon), description, modifier)
 }

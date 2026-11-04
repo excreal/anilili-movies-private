@@ -29,8 +29,8 @@ private val LightColors = lightColorScheme(
     surfaceContainer = Color(0xFFEBEEF6), surfaceContainerHigh = Color(0xFFE4E8F1), surfaceContainerHighest = Color(0xFFDDE2ED)
 )
 private val ExpressiveShapes = Shapes(
-    extraSmall = RoundedCornerShape(12.dp), small = RoundedCornerShape(20.dp),
-    medium = RoundedCornerShape(28.dp), large = RoundedCornerShape(32.dp), extraLarge = RoundedCornerShape(40.dp)
+    extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(24.dp)
 )
 
 @Composable

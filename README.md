@@ -7,18 +7,30 @@ Kwik/glot playlist-resolution flow from
 ## Use
 
 1. Type a title to search automatically after a short pause. Results show posters and release years. Clear the field to return to the empty Explore screen.
-2. Filter these results by year/type, or sort by title/year.
+2. Sort results by relevance, title, or year.
 3. Open a result to load its synopsis and every episode API page.
 4. Select individual episodes or **Select all**. Quality and audio choices are checked against the sources shared by every selected episode; choose from those available options and download.
-5. Open **Downloads** for collapsible show groups, local episode search, and compact episode rows with small posters, quality/audio tags, progress, and size. Filter active/completed episodes, tap play, or use the actions menu to pause/resume HLS downloads, retry failures, or delete after confirmation.
+5. Open **Downloads** for collapsible show groups, local episode search, and episode rows with posters, quality/audio, progress, and size. Sort the library by show title, status, or size. Use **Select** or long-press a row to select items; **Select all** includes collapsed groups in the current search. Changing the search clears selection. Delete asks once for the batch and reports partial failures; failed items remain visible and selected. Permanent deletion has no Undo. Pause/resume is offered for eligible HLS transfers; Retry save is offered for export failures. New direct downloads retain source identity for fresh-source Retry.
 6. Use the compact rows in **Settings** to choose the output folder, default audio (source default, Japanese, or English), connection count, or clear browser session data. Unavailable preferred audio falls back to the source default; per-show audio remains selectable.
 
 There are no demo results or simulated downloads.
 
+Download metadata and pending preparation/deletion operations live in Room.
+The first database open imports the old export records and direct-download index
+in one transaction. The migration is repeatable, preserves IDs/destinations,
+and leaves legacy preferences untouched for diagnosis. Deletion persists its
+intent before stopping work and serializes against publication and Retry save.
+Provider refusal or revoked access keeps the record and a retryable explanation.
+
 ## Sessions
 
-HTTP is attempted first. Detected Cloudflare challenges open Android WebView
-for manual verification, analogous to the desktop project's WebKit fallback.
+HTTP is attempted first. Search requests debounce for 400 ms. A challenge stays
+inline while typing; verification can open after 1.2 seconds without an edit,
+only on Explore in the foreground. Keyboard Search permits immediate verification.
+Edits cancel the previous HTTP call. Clearing or leaving Explore cancels pending
+presentation. Closing the browser keeps a Verify action, and a repeated challenge
+after verification stays inline instead of reopening. Background download
+challenges appear on their rows and in a banner.
 Complete verification; once the destination page is ready, the app saves the session and retries once automatically. The shield icon and **Settings → Open verification** also open the
 browser manually. WebView stores the browser profile/cookies privately; HTTP
 and image requests use those domain-scoped cookies and the same saved user
@@ -30,22 +42,15 @@ verification is not guaranteed and is not automated or bypassed.
 
 ## Downloads
 
-- **HLS:** Media3 downloads manifests, segments and supported HLS encryption into
-  `Android/data/com.example.animepahedl/files/hls-temp`. A foreground export
-  service reads the completed cache with Media3 Transformer and creates an MP4,
-  preserving the HLS segment timeline and encryption handling. The previous
-  concatenated-TS extraction shortcut has been removed. Before publishing,
-  the app verifies video presence and compares both container duration and actual
-  audio/video sample timelines with the cached playlist. If the first writer fails
-  or produces a truncated track, it retries once with Media3’s compatibility writer. A truncated output fails without deleting the cached source.
-  The primary writer creates fragmented MP4 to avoid repeated seek-table rebuilding during assembly and device-specific platform muxer crashes.
-  The Transformer writes into the pending output document and validation reads
-  that same document, avoiding an intermediate MP4 and a second full-file copy.
-  Downloads distinguishes waiting, MP4 preparation and final copying, with
-  progress for each active stage; HLS exports finish after validation, without
-  a separate copying stage. The temporary HLS source is removed only after the
-  output is validated and published. Export failures retain the source and
-  expose **Retry save**. Older private HLS caches remain available for export.
+- **HLS:** Media3 downloads manifests, segments, and supported encryption into
+  `Android/data/com.example.animepahedl/files/hls-temp`. On ARM64 devices, the
+  bundled FFmpeg executable reads this cache through a token-protected loopback
+  server and stream-copies video/audio into a staging MP4. The server has four
+  workers, a bounded request queue, streamed binary responses, a 1 MiB playlist
+  limit, and single HTTP byte-range support. The app checks tracks and timelines,
+  copies to the pending destination, confirms it is readable, and publishes it
+  before removing the cached source. Export failures retain the source and offer
+  **Retry save**. Unsupported devices fail before queueing a new HLS export.
 - **Direct MP4/WebM:** Android DownloadManager stages files in the app's
   `files/direct-temp` directory under Android/data. Completed files are copied
   to the same output folder, then the temporary download is removed.
@@ -70,7 +75,11 @@ verification is not guaranteed and is not automated or bypassed.
   the completed cache rather than downloading the episode again.
 - Download preparation (source resolution) requires the app to remain open;
   the resulting downloads and exports are handed to background services.
-  Interrupted exports resume when the app next opens. A stalled writer times out after five minutes and can use the fallback writer. Staging and final MP4
+  Unfinished episode preparation is stored locally and offers **Resume preparation**;
+  preparation runs only while the app remains open. Successfully queued episodes
+  remain queued if another episode fails. Interrupted exports resume when the app
+  next opens. Remux and copy stages allow up to 30 minutes each, with a two-minute
+  no-progress watchdog; validation has its own two-minute deadline. Staging and final MP4
   output coexist during export, so allow space for both. Android's
   foreground-service restrictions/time limits still apply.
 - Like the desktop implementation, packed player scripts are submitted to
@@ -88,10 +97,17 @@ the current site's protection accepts Android sessions.
 Use Android SDK 37 and a compatible JDK (21 recommended):
 
 ```sh
-bash ./gradlew assembleDebug testDebugUnitTest
+./build.sh debug --test
+./build.sh release
+./build.sh all --test
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. Minimum Android: 15 (API 35).
+The script defaults to `debug`, prints APK paths, and limits Gradle to two workers.
+Use `BUILD_WORKERS=1 ./build.sh all` to reduce concurrency further. `--test` includes
+local unit tests. It works from any directory and uses the Gradle wrapper.
+
+Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Minimum Android: 15 (API 35).
+Release APKs are unsigned unless all signing variables below are configured.
 
 ## Device verification
 
@@ -117,3 +133,50 @@ pool immediately. Host/network limits still determine achievable throughput.
 New exports use `Output folder/Show name/Show name ep01 720p.mp4` (or WebM
 for direct WebM sources). Episode numbers are padded to at least two digits;
 quality comes from the selected source. Existing files are not renamed.
+
+### FFmpeg
+
+HLS exports use the arm64-v8a FFmpeg 9.0 executable from
+[Android-FFmpeg-Prebuilt](https://github.com/hzw1199/Android-FFmpeg-Prebuilt/tree/main/ffmpeg-9.0).
+The executable is distributed under LGPL 2.1; its license is included in
+`app/src/main/assets/licenses/FFmpeg-LGPL-2.1.txt`. FFmpeg source is available
+at [FFmpeg n9.0](https://github.com/FFmpeg/FFmpeg/tree/n9.0). The upstream
+binary SHA-256 is `9085507b0dc32643b4d6d084a7e7d3469ef17907a7ba15c22d3997ed09c932aa`.
+The executable supports arm64-v8a only. HLS downloads use the existing Media3
+network downloader; FFmpeg reads its cache via a loopback server and stream-copies
+media into MP4. The output is checked before it is published.
+
+## Release checks
+
+Build an optimized APK with `./build.sh release`. Debug APKs use
+Android's development key and can upgrade existing debug installations. For a
+personal release, create and back up a private keystore outside the repository,
+then configure `ANIMEPAHE_KEYSTORE`, `ANIMEPAHE_STORE_PASSWORD`,
+`ANIMEPAHE_KEY_ALIAS`, and `ANIMEPAHE_KEY_PASSWORD` in the build environment.
+Run `./build.sh release`, then verify with SDK `apksigner verify --verbose`.
+Keep the same key for every upgrade; losing it prevents an in-place update.
+Increment `versionCode` for every distributed APK and update `versionName`.
+Never commit a keystore or passwords. Without these variables the release build
+is unsigned, suitable for build validation only.
+
+Before calling a release production-ready, run the unit and device suites and
+complete live-site search/verification/source selection plus a full-length HLS
+and direct-file download. Check screen-off use, interrupted transfer/export,
+process reopening, storage full/revoked access, a slow provider, Android's
+foreground-service time limit, large fonts, TalkBack, and keyboard/rotation.
+A passing build or fixture export does not establish live-site compatibility.
+
+## Library and recovery tools
+
+- Explore offers sorting, recent searches with a Clear history action, and bookmarked shows. Open a show to bookmark it or remove its bookmark.
+- **Select missing** selects episodes without a healthy job in the current quality/audio variant. Source options continue to be checked across the whole selection.
+- Downloads → episode actions → **Move to front** prioritizes the item for saving and gives an eligible HLS transfer the connection pool by pausing other HLS jobs. Resume the other jobs when ready. Android manages direct-file ordering separately.
+- Saved videos use the internal player. Playback position persists every five seconds and on close; the next saved episode in the same quality/audio variant is available in the player. Playback pauses when the app leaves the foreground.
+- Missing saved files remain in the library with a repair explanation. Use **Relink video** to choose a moved file, or **Remove record; keep file** to remove only its library entry. These actions are separate from permanent media deletion.
+- Settings → **Storage and recovery** reports available app-volume space, retained temporary bytes, failed saves, and inaccessible files. Export also checks estimated assembly space before starting. Document providers may have a separate capacity limit which Android does not expose.
+- Settings → **Unmetered downloads** updates HLS requirements immediately. Newly queued direct downloads use Wi-Fi and disallow roaming; existing direct downloads retain the policy they were queued with.
+- Settings → **Source health** shows recent request outcomes and verification information. Browser verification alone does not prove that HTTP requests will be accepted.
+- Settings → **Export diagnostics** previews a summary before saving it through the document picker. The summary omits titles, paths, cookies, and media URLs.
+- HLS notifications provide Pause/Resume actions. Transfer completion and saving remain distinct; a video becomes available after final output verification.
+
+Database metadata is published to the app only after its ordered write commits. A failed write stays queued for retry, and critical transitions cannot pass the persistence barrier until it succeeds. The Room v1 schema is exported under `app/schemas`; future schema changes must supply and test migrations. The obsolete Transformer/direct-muxer implementation and dependencies have been removed. HLS export and its fixtures use FFmpeg.

@@ -1,6 +1,7 @@
 package com.example.animepahedl
 
 import org.jsoup.Jsoup
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** Mirrors src/http.rs: a normal Cloudflare jsd script is not a CAPTCHA. */
 internal object SessionChecks {
@@ -38,4 +39,11 @@ internal object SessionChecks {
           return state(true, 'Destination loaded without a detected challenge');
         })()
     """.trimIndent()
+}
+
+/** Default HTTPS ports normalize through HttpUrl; a different port is a different origin. */
+internal fun verificationOriginMatches(expected: String, actual: String): Boolean {
+    val first = expected.toHttpUrlOrNull() ?: return false
+    val second = actual.toHttpUrlOrNull() ?: return false
+    return first.scheme == "https" && second.scheme == first.scheme && first.host == second.host && first.port == second.port
 }

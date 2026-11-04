@@ -1,0 +1,6 @@
+
+com.example.animepahedl.LibraryNavigationTest:..
+
+Time: 6.104
+
+OK (2 tests)
