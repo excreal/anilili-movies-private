@@ -21,8 +21,8 @@ internal interface DownloadRepository {
     suspend fun resume(id: String)
     suspend fun retry(id: String)
     suspend fun retrySave(id: String)
-    suspend fun delete(id: String): ItemResult
-    suspend fun deleteBatch(ids: Set<String>): List<ItemResult> = ids.map { delete(it) }
+    suspend fun delete(id: String, deleteSavedFile: Boolean = true): ItemResult
+    suspend fun deleteBatch(ids: Set<String>, confirmedSaved: Set<String> = ids): List<ItemResult> = ids.map { delete(it, it in confirmedSaved) }
     suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord? = null): String
 }
 
@@ -62,8 +62,9 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
                     download.bytesDownloaded, download.contentLength)
             }
         }
+        val exports = Exports.all(app)
         val system = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        DownloadStore.operations("direct").forEach { (id, title) ->
+        DownloadStore.operations("direct").filterKeys { exports["direct:$it"]?.uri.isNullOrEmpty() }.forEach { (id, title) ->
             system.query(DownloadManager.Query().setFilterById(id.toLong())).use { cursor ->
                 if (cursor.moveToFirst()) {
                     val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
@@ -79,10 +80,10 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
                 }
             }
         }
-        val exports = Exports.all(app)
         val artwork = app.getSharedPreferences("download-artwork", Context.MODE_PRIVATE)
         // Keep app-owned rows visible even if an engine has already removed its staging entry.
-        exports.filter { (id, record) -> record.uri.isEmpty() && rows.none { it.id == id } }.forEach { (id, record) ->
+        val engineIds = rows.mapTo(HashSet()) { it.id }
+        exports.filter { (id, record) -> record.uri.isEmpty() && id !in engineIds }.forEach { (id, record) ->
             rows += DownloadRow(id, record.title, TransferState.FAILED, -1f, explanation = "Temporary media is unavailable. Retry to resolve a fresh source.")
         }
         val challenges = app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).all.keys
@@ -98,7 +99,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
                     failure = classifyFailure(record.error), explanation = record.error)
                 row.transfer == TransferState.COMPLETE && record != null -> Exports.progress[row.id]?.let {
                     metadata.copy(save = when (it.stage) {
-                        "Preparing MP4", "Retrying MP4" -> SaveState.PREPARING
+                        "Preparing MP4", "Retrying MP4", "Preparing video" -> SaveState.PREPARING
                         "Checking MP4", "Checking saved video" -> SaveState.CHECKING
                         else -> SaveState.COPYING
                     }, percent = it.percent)
@@ -119,6 +120,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
     }
 
     override suspend fun resume(id: String) {
+        if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
         if (Exports.deleting(id)) return
         DownloadService.sendSetStopReason(app, OfflineDownloadService::class.java, id, Download.STOP_REASON_NONE, true)
         DownloadService.sendResumeDownloads(app, OfflineDownloadService::class.java, true)
@@ -131,8 +133,10 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         DownloadService.sendAddDownload(app, OfflineDownloadService::class.java, request, true)
         DownloadService.sendResumeDownloads(app, OfflineDownloadService::class.java, true)
     }
-    override suspend fun delete(id: String): ItemResult {
-        // Persist first; export callbacks and process recovery must see the tombstone.
+    override suspend fun delete(id: String, deleteSavedFile: Boolean): ItemResult {
+        // Preserve the user's Cancel intent even if an existing file is adopted before deletion runs.
+        if (!deleteSavedFile) DownloadStore.operation(id, "delete-keep-file", "1")
+        val removePublished = deleteSavedFile && id !in DownloadStore.operations("delete-keep-file")
         DownloadStore.operation(id, "delete", "")
         return try {
             DownloadStore.flush()
@@ -140,7 +144,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
             Exports.withItemLock(id) {
                 val record = Exports.all(app)[id]
                 withContext(Dispatchers.IO) {
-                    listOfNotNull(record?.uri?.takeIf { it.isNotBlank() }, record?.pendingUri?.takeIf { it.isNotBlank() }).distinct()
+                    listOfNotNull(record?.uri?.takeIf { removePublished && it.isNotBlank() }, record?.pendingUri?.takeIf { it.isNotBlank() && it != record.uri }).distinct()
                         .forEach { deleteOwnedMedia(app, (it).toUri()) }
                     if (id.startsWith("direct:")) {
                         val number = id.removePrefix("direct:")
@@ -159,6 +163,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
                 app.getSharedPreferences("download-retries", Context.MODE_PRIVATE).edit { remove(id) }
                 Exports.remove(app, id)
                 DownloadStore.operation(id, "delete", null)
+                DownloadStore.operation(id, "delete-keep-file", null)
                 DownloadStore.flush()
                 ItemResult(id, true)
             }
@@ -169,24 +174,32 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         }
     }
 
-    private val enqueueLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+    private companion object {
+        val enqueueLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+    }
     override suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord?): String {
         val lock = enqueueLocks.getOrPut(identity.key) { kotlinx.coroutines.sync.Mutex() }
         lock.lock()
         try { return enqueueLocked(identity, media, previous) } finally { lock.unlock() }
     }
-    private suspend fun enqueueLocked(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord?): String {
+    private suspend fun enqueueLocked(identity: DownloadIdentity, unresolved: ResolvedMedia, previous: ExportRecord?): String {
+        if (!hasOutputFolderAccess(app)) throw OutputFolderAccessRequired()
         if (previous == null) Exports.all(app).entries.firstOrNull { (id, record) -> !Exports.deleting(id) && (record.identity?.key == identity.key || id == identity.key) }?.let { return it.key }
-        network.checkMedia(media.url)
-        val title = "${identity.anime.title} · Episode ${identity.episode.number} · ${media.quality} · ${audioTag(media.audio)}"
+        val media = if (identity.isSiteDownload) MediaRequests.available(unresolved, SiteDownloadCookieStore(app)::headerFor) else {
+            network.checkMedia(unresolved.url)
+            unresolved.copy(headers = mapOf("Referer" to "https://kwik.cx/") + unresolved.headers.orEmpty())
+        }
+        val title = identity.anime.title + (if (identity.isSingleVideo) "" else " · Episode ${identity.episode.number}") + " · ${media.quality} · ${audioTag(media.audio)}"
         val record = previous?.copy(title = title, showTitle = identity.anime.title, episodeNumber = identity.episode.number,
-            quality = media.quality, audio = media.audio, error = "", uri = "", identity = identity)
+            quality = media.quality, audio = media.audio, error = "", uri = "", identity = identity, media = media)
             ?: ExportRecord(title, settings.outputTree, settings.outputFolder, thumbnail = identity.anime.poster,
-                audio = media.audio, quality = media.quality, showTitle = identity.anime.title, episodeNumber = identity.episode.number, identity = identity)
-        if ((media.url).toUri().path.orEmpty().endsWith(".m3u8", true)) {
-            require(java.io.File(app.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so").exists()) { "Saving HLS requires an ARM64 device. This device cannot run the bundled exporter." }
+                audio = media.audio, quality = media.quality, showTitle = identity.anime.title, episodeNumber = identity.episode.number, identity = identity, media = media)
+        if (media.isHls() || identity.isSiteDownload) {
+            if (media.isHls()) require(java.io.File(app.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so").exists()) { "Saving HLS requires an ARM64 device. This device cannot run the bundled exporter." }
+            // Media3 also handles SiteDownload MP4s so its scoped interceptor controls every redirect.
             val id = identity.key
-            val request = DownloadRequest.Builder(id, (media.url).toUri()).setMimeType(MimeTypes.APPLICATION_M3U8).setData(title.toByteArray()).build()
+            val mime = if (media.isHls()) MimeTypes.APPLICATION_M3U8 else media.mimeType ?: MimeTypes.VIDEO_MP4
+            val request = DownloadRequest.Builder(id, (media.url).toUri()).setMimeType(mime).setData(title.toByteArray()).build()
             Exports.put(app, id, record)
             DownloadStore.flush()
             DownloadService.sendAddDownload(app, OfflineDownloadService::class.java, request, true)
@@ -199,8 +212,9 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         val request = DownloadManager.Request((media.url).toUri()).setTitle(title)
             .setDestinationInExternalFilesDir(app, "direct-temp", stagingName)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .addRequestHeader("User-Agent", AnimeNetwork.userAgent).addRequestHeader("Referer", "https://kwik.cx/")
-        CookieManager.getInstance().getCookie(media.url)?.let { request.addRequestHeader("Cookie", it) }
+        mediaRequestHeaders(media).forEach { (name, value) -> request.addRequestHeader(name, value) }
+        if (!identity.isSiteDownload && media.headers.orEmpty().keys.none { it.equals("Cookie", true) })
+            CookieManager.getInstance().getCookie(media.url)?.let { request.addRequestHeader("Cookie", it) }
         if (settings.unmeteredOnly) request.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI)
         request.setAllowedOverRoaming(false)
         val number = withContext(Dispatchers.IO) { (app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request) }
@@ -213,6 +227,12 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         return id
     }
     override suspend fun retry(id: String) {
+        val stored = Exports.all(app)[id]
+        stored?.identity?.let { identity ->
+            val tree = stored.tree.takeIf { hasOutputFolderAccess(app, it) } ?: settings.outputTree
+            val existing = withContext(Dispatchers.IO) { findExistingOutput(app, tree, stored.outputLocation("mp4")) }
+            if (existing != null) { adoptExistingVideo(app, identity, existing, tree); refresh(); return }
+        }
         Exports.withItemLock(id) {
             if (Exports.deleting(id)) return@withItemLock
             val record = Exports.all(app)[id]
@@ -222,7 +242,12 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
                 else error("This older download has no source identity. Open the show and select the episode again.")
                 return@withItemLock
             }
-            val media = network.playlist(identity.anime, identity.episode, identity.quality, identity.audio)
+            val media = if (identity.isSiteDownload) {
+                val locator = identity.locator?.takeIf { it.isNotBlank() }
+                    ?: error("This video download has no source locator. Inspect its link again.")
+                val cookies = SiteDownloadCookieStore(app)
+                cookies.applyTo(SiteDownloadRepository(cookieHeader = cookies::headerFor).resolve(locator, identity.quality, cookies.headerFor(locator)))
+            } else network.playlist(identity.anime, identity.episode, identity.quality, identity.audio)
             val newId = enqueue(identity, media, record)
             app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { remove(id) }
             if (newId != id) {

@@ -18,7 +18,7 @@ class LibraryNavigationTest {
             compose.waitUntil(10000) {
                 androidx.lifecycle.ViewModelProvider(activity)[DownloaderViewModel::class.java].showDownloads
             }
-            compose.onNodeWithText("Your offline collection").assertIsDisplayed()
+            compose.onNodeWithTag("downloads-list").assertIsDisplayed()
         } finally {
             // ActivityScenario matches lifecycle events against the original launch intent.
             // onNewIntent legitimately replaces it, so restore the test identity for teardown.
@@ -28,7 +28,7 @@ class LibraryNavigationTest {
         }
     }
 
-    @Test fun deletedSavedFileRemainsAvailableForRepair() {
+    @Test fun deletedSavedFileIsRemovedFromLibrary() {
         val app = compose.activity
         val id = "test-deleted-${System.currentTimeMillis()}"
         val uri = app.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
@@ -42,8 +42,7 @@ class LibraryNavigationTest {
             val model = androidx.lifecycle.ViewModelProvider(app)[DownloaderViewModel::class.java]
             compose.waitUntil(10000) { model.downloads.any { it.id == id } }
             app.contentResolver.delete(uri, null, null)
-            compose.waitUntil(10000) { Exports.all(app)[id]?.error?.contains("missing") == true }
-            compose.runOnIdle { org.junit.Assert.assertTrue(model.downloads.any { it.id == id }) }
+            compose.waitUntil(10000) { Exports.all(app)[id] == null && model.downloads.none { it.id == id } }
         } finally {
             app.contentResolver.delete(uri, null, null)
             Exports.remove(app, id)
@@ -95,7 +94,7 @@ class LibraryNavigationTest {
                 "Library Fixture · Episode ${index + 1} · 720p · JPN", "", "", uri = "content://fixture/$index")) }
             compose.waitUntil(10000) { androidx.lifecycle.ViewModelProvider(app)[DownloaderViewModel::class.java].downloads.any { it.id == "${prefix}99" } }
             compose.onNode(hasText("Downloads") and hasClickAction()).performClick()
-            compose.onNodeWithText("Find downloaded episodes").performTextInput("Episode 100")
+            compose.onNodeWithTag("downloads-search").performTextInput("Episode 100")
             compose.onNodeWithText("Library Fixture", substring = false).performClick()
             compose.onNodeWithContentDescription("Actions for Library Fixture · Episode 100 · 720p · JPN").performClick()
             compose.onNodeWithText("Delete saved video").performClick()
@@ -107,8 +106,8 @@ class LibraryNavigationTest {
 
     @Test fun downloadsAndSettingsAreReachable() {
         compose.onNode(hasText("Downloads") and hasClickAction()).performClick()
-        compose.onNodeWithText("Your offline collection").assertIsDisplayed()
-        compose.onNode(hasText("Sort: Show title") and hasClickAction()).assertExists()
+        compose.onNodeWithTag("downloads-list").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Sort: Show title").assertExists()
         compose.onNode(hasText("Settings") and hasClickAction()).performClick()
         compose.onNodeWithText("Download storage").assertIsDisplayed()
         compose.onNodeWithText("Download storage").performClick()

@@ -47,6 +47,12 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         libraryPreferences.edit { putString("bookmarks", com.google.gson.Gson().toJson(bookmarks)) }
     }
     fun clearRecentSearches() { recentSearches = emptyList(); libraryPreferences.edit { remove("recent") } }
+    var siteDownloadSelected by mutableStateOf(false)
+        private set
+    fun selectExploreSource(siteDownload: Boolean) {
+        siteDownloadSelected = siteDownload
+        if (siteDownload) leaveExplore() else presentSearchVerification()
+    }
     var query by mutableStateOf("")
         private set
     var results by mutableStateOf(emptyList<Anime>())
@@ -93,10 +99,35 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     private var idleJob: Job? = null
     private val verifiedOperations = mutableSetOf<OperationId>()
     private val verificationOperations = mutableSetOf<OperationId>()
-    private val exploreVisible get() = !showDownloads && !showSettings && !showAbout && selectedAnime == null
+    private val exploreVisible get() = !siteDownloadSelected && !showDownloads && !showSettings && !showAbout && selectedAnime == null
     fun setForeground(value: Boolean) {
         foreground = value
-        if (!value) searchGate.invalidate() else presentSearchVerification()
+        outputAccessGranted = hasOutputFolderAccess(app)
+        outputCheckRequired = !outputAccessGranted || DownloadStore.operations("folder-access")["transfers"] != null
+        if (!value) {
+            searchGate.invalidate()
+            savedFilesWatcher.stop()
+            savedFilesPolling?.cancel()
+            savedFilesRefresh?.cancel()
+        } else {
+            presentSearchVerification()
+            savedFilesWatcher.start()
+            refreshDownloads()
+            savedFilesPolling?.cancel()
+            savedFilesPolling = viewModelScope.launch {
+                try {
+                    DownloadStore.awaitReady()
+                    savedFilesWatcher.updateRoots()
+                    refreshSavedFiles()
+                    while (true) {
+                        delay(30_000)
+                        savedFilesWatcher.updateRoots()
+                        refreshSavedFiles()
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { DebugTrace.event("saved_files_watch_deferred") }
+            }
+        }
     }
     private fun leaveExplore() { searchGate.invalidate(); idleJob?.cancel() }
     var resolving by mutableStateOf(false)
@@ -139,6 +170,12 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         private set
     var outputTree by mutableStateOf(settings.outputTree)
         private set
+    var outputAccessGranted by mutableStateOf(hasOutputFolderAccess(application))
+        private set
+    var outputCheckRequired by mutableStateOf(!hasOutputFolderAccess(application))
+        private set
+    var checkingExistingFiles by mutableStateOf(false)
+        private set
     var clearingSession by mutableStateOf(false)
         private set
     var settingsMessage by mutableStateOf<String?>(null)
@@ -146,36 +183,54 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     private var searchJob: Job? = null
     private var searchGeneration = 0
     private var detailJob: Job? = null
-    private var resolveJob: Job? = null
     private val app get() = getApplication<Application>()
 
     private var savedFilesRefresh: Job? = null
+    private var savedFilesPolling: Job? = null
+    private var savedFilesDirty = false
+    private val savedFilesWatcher by lazy { SavedFilesWatcher(app, ::refreshSavedFiles) }
 
     fun refreshSavedFiles() {
-        savedFilesRefresh?.cancel()
+        if (!foreground) return
+        savedFilesDirty = true
+        if (savedFilesRefresh?.isActive == true) return
         savedFilesRefresh = viewModelScope.launch {
-            delay(300)
-            val records = Exports.all(app).filterValues { it.uri.isNotEmpty() }
-            val missing = withContext(Dispatchers.IO) {
-                records.filter { (_, record) ->
-                    try {
-                        val uri = (record.uri).toUri()
-                        if (uri.scheme != "content") false else
-                            app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                                ?.use { !it.moveToFirst() } ?: false
-                    } catch (_: Exception) { false }
-                }
-            }
-            val current = Exports.all(app)
-            missing.forEach { (id, record) -> if (current[id] == record) Exports.put(app, id, record.copy(error = "Saved file is missing. Relink the video or remove its library record.")) }
-            refreshDownloads()
+            try {
+                DownloadStore.awaitReady()
+                do {
+                    savedFilesDirty = false
+                    delay(500)
+                    val records = Exports.all(app).filterValues { it.uri.isNotEmpty() }
+                    val missing = missingSavedFiles(app, records)
+                    var removed = false
+                    for ((id, record) in missing) Exports.withItemLock(id) {
+                        ensureActive()
+                        if (!Exports.deleting(id) && Exports.all(app)[id] == record) {
+                            // Only forget a confirmed deleted file. Never delete another file or a transfer.
+                            Exports.remove(app, id)
+                            if (id.startsWith("direct:")) DownloadStore.operation(id.removePrefix("direct:"), "direct", null)
+                            removed = true
+                        }
+                    }
+                    if (removed) DownloadStore.flush()
+                    refreshDownloads()
+                } while (savedFilesDirty && foreground)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { DebugTrace.event("saved_files_refresh_deferred") }
         }
     }
 
+    override fun onCleared() {
+        savedFilesWatcher.stop()
+        super.onCleared()
+    }
+
     private fun hasActiveDirectDownload(): Boolean {
-        if (DownloadStore.operations("direct").isEmpty()) return false
+        val exports = Exports.all(app)
+        val ids = DownloadStore.operations("direct").keys.filter { exports["direct:$it"]?.uri.isNullOrEmpty() }
+        if (ids.isEmpty()) return false
         val system = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        return DownloadStore.operations("direct").keys.any { id ->
+        return ids.any { id ->
             system.query(DownloadManager.Query().setFilterById(id.toLong())).use { cursor ->
                 cursor.moveToFirst() && cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) in
                     listOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
@@ -356,54 +411,39 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     fun downloadSelected() {
         val data = details ?: return
         val episodes = data.episodes.filter { it.session in selectedEpisodes }
-        if (episodes.isEmpty() || resolving || loadingSources || availableSources.isEmpty()) return
+        if (episodes.isEmpty() || resolving || pendingPreparation != null || loadingSources || availableSources.isEmpty()) return
         runPreparation(PreparationRecord(data.anime, episodes, quality, audio))
     }
-    fun resumePreparation() { pendingPreparation?.let(::runPreparation) }
-    fun discardPreparation() { pendingPreparation = null; DownloadStore.operation("episodes", "preparation", null) }
-    private fun persistPreparation(record: PreparationRecord?) {
-        pendingPreparation = record
-        DownloadStore.operation("episodes", "preparation", record?.let { com.google.gson.Gson().toJson(it) })
+    internal var preparationStatus by mutableStateOf(PreparationStatus())
+        private set
+    fun resumePreparation() { viewModelScope.launch {
+        try { PreparationJobs.resume(app, PreparationJobs.ANIME) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { downloadNotice = "Could not schedule preparation. Reopen the app to retry." }
+    } }
+    fun discardPreparation() { viewModelScope.launch {
+        try { PreparationJobs.discard(app, PreparationJobs.ANIME) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { downloadNotice = "Could not discard preparation. Try again." }
+    } }
+    fun verifyPreparation() {
+        val url = preparationStatus.verificationUrl ?: return
+        openVerification(url, pendingPreparation?.let { OperationId.Preparation(it.anime.session) })
     }
     private fun runPreparation(preparation: PreparationRecord) {
-        if (resolving) return
+        if (resolving || pendingPreparation != null) return
         resolving = true
-        resolveJob = viewModelScope.launch {
-            var queued = 0
-            var skipped = 0
-            var lastFailure: Exception? = null
-            val remaining = preparation.episodes.toMutableList()
-            try {
-                persistPreparation(preparation)
-                DownloadStore.flush()
-                preparation.episodes.forEachIndexed { index, episode ->
-                    resolvingLabel = "Preparing ${index + 1}/${preparation.episodes.size} · Episode ${episode.number}"
-                    try {
-                        val media = repository.playlist(preparation.anime, episode, preparation.quality, preparation.audio)
-                        val identity = DownloadIdentity(preparation.anime, episode, media.quality, media.audio)
-                        val exists = Exports.all(app).any { (id, record) -> !Exports.deleting(id) && (record.identity?.key == identity.key || id == identity.key) }
-                        val location = downloadLocation(preparation.anime.title, episode.number, media.quality,
-                            if ((media.url).toUri().path.orEmpty().endsWith(".webm", true)) "webm" else "mp4", media.audio)
-                        val saved = withContext(Dispatchers.IO) { existingOutput(app, settings.outputTree, settings.outputFolder, location) }
-                        if (exists || saved) skipped++ else { downloadRepository.enqueue(identity, media); queued++ }
-                        remaining.remove(episode)
-                        if (selectedAnime?.session == preparation.anime.session)
-                            selectedEpisodes = selectedEpisodes - episode.session
-                        persistPreparation(preparation.copy(episodes = remaining.toList()).takeIf { remaining.isNotEmpty() })
-                        DownloadStore.flush()
-                    } catch (e: CancellationException) { throw e
-                    } catch (e: Exception) { lastFailure = e }
-                }
-                lastFailure?.let { fail(it, OperationId.Preparation(preparation.anime.session)) }
-                downloadNotice = "$queued queued · $skipped skipped · ${remaining.size} failed" + if (remaining.isNotEmpty()) ". Use Resume preparation to retry remaining episodes." else ""
-            } catch (e: CancellationException) { throw e
-            } catch (e: Exception) {
-                downloadNotice = "Couldn’t prepare downloads. Your remaining episodes are saved; tap Resume to retry."
-                DebugTrace.event("preparation_failed", "reason" to e.toString())
-            } finally { resolving = false; resolvingLabel = ""; refreshDownloads() }
+        viewModelScope.launch {
+            try { PreparationJobs.submit(app, PreparationJobs.ANIME, preparation) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { resolving = false; downloadNotice = "Could not schedule preparation. Your selection is kept." }
         }
     }
-    fun cancelPreparation() { resolveJob?.cancel() }
+    fun cancelPreparation() { viewModelScope.launch {
+        try { PreparationJobs.pause(app, PreparationJobs.ANIME) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { downloadNotice = "Could not pause preparation. Try again." }
+    } }
     private val retryingDownloads = mutableSetOf<String>()
     fun retryDownload(id: String) {
         if (!retryingDownloads.add(id)) return
@@ -499,7 +539,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     private fun currentOperation(): OperationId? = failures.keys.lastOrNull { relevant(it) && when (it) {
         is OperationId.Search -> false
         is OperationId.Download -> false
-        else -> !showDownloads && !showSettings
+        else -> !siteDownloadSelected && !showDownloads && !showSettings
     } }
     private fun currentFailure() = currentOperation()?.let { failures[it] }
 
@@ -519,7 +559,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             if (operation is OperationId.Search && !repeated && exploreVisible && foreground) {
                 searchGate.challenge(operation.generation)
                 presentSearchVerification()
-            } else if (operation !is OperationId.Download && operation !is OperationId.Search && operation !is OperationId.Preparation && !repeated && foreground && verification == null) {
+            } else if (operation !is OperationId.Download && operation !is OperationId.Search && operation !is OperationId.Preparation && !repeated && foreground && !siteDownloadSelected && verification == null) {
                 openVerification(challenge.browserUrl, operation)
             }
         }
@@ -567,12 +607,14 @@ class DownloaderViewModel(application: Application, private val repository: Anim
 
     private var refreshJob: Job? = null
     private fun refreshDownloads() {
+        if (!foreground) { refreshAgain = true; return }
         if (refreshJob?.isActive == true) { refreshAgain = true; return }
         refreshJob = viewModelScope.launch {
             try {
             do {
                 refreshAgain = false
-                delay(250)
+                delay(if (showDownloads) 500 else 1500)
+                if (!foreground) break
                 downloadRepository.refresh()
                 val updated = downloadRepository.rows.value
                 if (downloads != updated) {
@@ -583,7 +625,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
                 checkMediaVerification()
                 loadMissingArtwork()
                 refreshStorageUsage()
-            } while (refreshAgain)
+            } while (refreshAgain && foreground)
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 downloadNotice = "Couldn’t refresh downloads. Try reopening Downloads."
@@ -596,7 +638,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     private var lastUsageCheck = 0L
     private suspend fun refreshStorageUsage() {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastUsageCheck < 5000) return
+        if (now - lastUsageCheck < 30_000) return
         lastUsageCheck = now
         temporaryBytes = withContext(Dispatchers.IO) {
             val root = app.getExternalFilesDir(null) ?: app.filesDir
@@ -616,12 +658,13 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         }
     }
 
+    private val animeDownloadId = Regex("^[a-fA-F0-9-]{36}-.*")
     private fun loadMissingArtwork() {
         if (artworkJob?.isActive == true) return
         val artwork = app.getSharedPreferences("download-artwork", Context.MODE_PRIVATE)
         val missing = downloads.filter { row ->
             val poster = artwork.getString(row.id.take(36), null)
-            poster.isNullOrEmpty() && row.id.matches(Regex("^[a-fA-F0-9-]{36}-.*")) && row.id.take(36) !in attemptedArtwork
+            row.thumbnail.isBlank() && poster.isNullOrEmpty() && row.id.take(36) !in attemptedArtwork && row.id.matches(animeDownloadId)
         }.distinctBy { it.id.take(36) }
         artworkJob = viewModelScope.launch {
             missing.forEach { row ->
@@ -647,12 +690,13 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     fun toggleDownload(id: String) { selectedDownloadIds = if (id in selectedDownloadIds) selectedDownloadIds - id else selectedDownloadIds + id }
     fun selectDownloads(ids: Set<String>) { selectionMode = true; selectedDownloadIds = ids }
     fun clearDownloadSelection() { selectedDownloadIds = emptySet() }
-    fun removeDownload(id: String) = removeDownloads(setOf(id))
-    fun removeDownloads(ids: Set<String>) {
+    fun removeDownload(id: String, deleteSavedFile: Boolean = downloads.any { it.id == id && it.complete }) =
+        removeDownloads(setOf(id), if (deleteSavedFile) setOf(id) else emptySet())
+    fun removeDownloads(ids: Set<String>, confirmedSaved: Set<String> = downloads.filter { it.id in ids && it.complete }.map { it.id }.toSet()) {
         if (deletingDownloads || ids.isEmpty()) return
         deletingDownloads = true
         viewModelScope.launch {
-            val outcomes = withContext(kotlinx.coroutines.NonCancellable) { downloadRepository.deleteBatch(ids) }
+            val outcomes = withContext(kotlinx.coroutines.NonCancellable) { downloadRepository.deleteBatch(ids, confirmedSaved) }
             outcomes.filter { it.succeeded }.forEach { failures.remove(OperationId.Download(it.id)) }
             val failed = outcomes.filterNot { it.succeeded }.map { it.id }.toSet()
             selectedDownloadIds = failed
@@ -689,20 +733,39 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         val folder = normalizeOutputFolder(input) ?: return false
         settings.outputTree = ""
         outputTree = ""
+        outputAccessGranted = false
+        OfflineDownloads.manager(app).pauseDownloads()
+        DownloadStore.operation("transfers", "folder-access", "1")
         settings.outputFolder = folder
         outputFolder = folder
         settingsMessage = "Output folder saved. Applies to new downloads."
         return true
     }
 
-    fun chooseOutputTree(uri: Uri) {
+    fun chooseOutputTree(uri: Uri, onReady: () -> Unit = {}): Boolean {
         try {
             app.contentResolver.takePersistableUriPermission(uri,
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             settings.outputTree = uri.toString()
             outputTree = uri.toString()
-            settingsMessage = "Output folder saved. Applies to new downloads."
-        } catch (e: Exception) { settingsMessage = "Cannot use folder: ${e.message}" }
+            outputAccessGranted = hasOutputFolderAccess(app)
+            if (!outputAccessGranted) { settingsMessage = "Choose a folder with read and write access."; return false }
+            checkingExistingFiles = true
+            settingsMessage = "Checking existing videos before resuming downloads…"
+            viewModelScope.launch {
+                try {
+                    reconcileExistingVideos(app)
+                    settingsMessage = "Folder linked. Matching videos are reused; remaining downloads can continue."
+                    onReady()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { settingsMessage = "Could not check this folder. Choose the original downloads folder again." }
+                finally { checkingExistingFiles = false; refreshDownloads() }
+            }
+            return true
+        } catch (_: Exception) {
+            settingsMessage = "Cannot access that folder. Choose the folder containing your saved show folders."
+            return false
+        }
     }
 
     fun clearSessionData() {
@@ -729,16 +792,28 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         viewModelScope.launch {
             try {
             DownloadStore.awaitReady()
+            launch { PreparationJobs.observe(app, PreparationJobs.ANIME).collect { status ->
+                val before = pendingPreparation
+                val pending = PreparationJobs.payload(PreparationJobs.ANIME)?.let {
+                    runCatching { com.google.gson.Gson().fromJson(it, PreparationRecord::class.java) }.getOrNull()
+                }
+                if (before != null && selectedAnime?.session == before.anime.session &&
+                    DownloadStore.operations("preparation-generation")[PreparationJobs.ANIME] != null) {
+                    val finished = before.episodes.map { it.session }.toSet() - pending?.episodes.orEmpty().map { it.session }.toSet()
+                    selectedEpisodes = selectedEpisodes - finished
+                }
+                pendingPreparation = pending
+                preparationStatus = status
+                resolving = status.automatic
+                resolvingLabel = status.label
+            } }
             withContext(Dispatchers.IO) { OfflineDownloads.prepareCache(app) }
             withContext(Dispatchers.IO) { reconcileDirectEnqueues(app) }
-            pendingPreparation = DownloadStore.operations("preparation")["episodes"]?.let {
-                runCatching { com.google.gson.Gson().fromJson(it, PreparationRecord::class.java) }.getOrNull()
-            }
             val manager = OfflineDownloads.manager(app)
             val unfinished = withContext(Dispatchers.IO) { manager.downloadIndex.getDownloads(
                 Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING, Download.STATE_FAILED
             ).use { it.moveToNext() } }
-            if (unfinished) runCatching { DownloadService.startForeground(app, OfflineDownloadService::class.java) }.onFailure {
+            if (unfinished && outputAccessGranted) runCatching { DownloadService.startForeground(app, OfflineDownloadService::class.java) }.onFailure {
                 downloadNotice = "Downloads could not start. Reopen the app and tap Resume. ${it.javaClass.simpleName}"
             }
             DownloadStore.operations("service-timeout").values.firstOrNull()?.let { downloadNotice = it }
@@ -753,7 +828,11 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             Exports.start(app)
             refreshDownloads()
             checkMediaVerification()
-            viewModelScope.launch { DownloadStore.revisions.collect { refreshDownloads() } }
+            viewModelScope.launch { DownloadStore.revisions.collect {
+                outputCheckRequired = !hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null
+                if (foreground) savedFilesWatcher.updateRoots()
+                refreshDownloads()
+            } }
             viewModelScope.launch { DownloadStore.health.collect { failure ->
                 if (failure != null) downloadNotice = "Download state could not be saved ($failure). Free storage and reopen the app; media is retained."
                 refreshDownloads()
@@ -764,7 +843,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             viewModelScope.launch {
                 while (true) {
                     delay(1000)
-                    if (withContext(Dispatchers.IO) { hasActiveDirectDownload() }) refreshDownloads()
+                    if (foreground && withContext(Dispatchers.IO) { hasActiveDirectDownload() }) refreshDownloads()
                 }
             }
             } catch (e: CancellationException) { throw e

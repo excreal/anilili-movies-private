@@ -20,6 +20,8 @@ internal enum class AppIcon(val path: String) {
     Shield("M12,2 3,6v6c0,5 4,9 9,10 5,-1 9,-5 9,-10V6zM11,16l-4,-4 1.4,-1.4 2.6,2.6 5.6,-5.6L18,9z"),
     Folder("M3,4h7l2,2h9v14H3zM5,8v10h14V8z"),
     Play("M8,5v14l11,-7z"),
+    Pause("M6,4h4v16H6zM14,4h4v16h-4z"),
+    Sort("M3,5h18v2H3zM6,11h12v2H6zM9,17h6v2H9z"),
     More("M10,3h4v4h-4zM10,10h4v4h-4zM10,17h4v4h-4z"),
     Delete("M6,7h12l-1,15H7zM9,2h6l1,2h4v2H4V4h4z"),
     Refresh("M18,7a8,8 0,1 0,2 9h-2.3a6,6 0,1 1,-1.1 -7.5L13,12h9V3z"),

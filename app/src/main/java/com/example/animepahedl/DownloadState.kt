@@ -45,8 +45,22 @@ data class DownloadRow(val id: String, val title: String, val transfer: Transfer
     }
 }
 
-internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val quality: String, val audio: String) {
-    val key get() = "${anime.session}-${episode.session}-$quality-$audio"
+internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val quality: String, val audio: String,
+    val source: String? = null, val locator: String? = null) {
+    val isSiteDownload get() = source == "sites"
+    val isSingleVideo get() = isSiteDownload && anime.type == "Video"
+    // Absent fields in old Gson records stay null. Never change an AnimePahe download key.
+    val key get() = if (!isSiteDownload) "${anime.session}-${episode.session}-$quality-$audio" else {
+        val value = listOf(source, anime.session, episode.session, quality, audio).joinToString("\u0000")
+        "sites:" + java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+    companion object {
+        fun siteDownload(series: SiteDownloadSeries, episode: SiteDownloadEpisode, quality: String, audio: String) =
+            DownloadIdentity(Anime("sites:${series.provider.name}:${series.id}", series.title, series.poster,
+                "", if (series.isSingleVideo) "Video" else "Series", ""), Episode(episode.id, episode.number.toString(), series.poster, ""),
+                quality, audio, "sites", episode.url)
+    }
 }
 
 internal fun classifyFailure(message: String): FailureReason = when {

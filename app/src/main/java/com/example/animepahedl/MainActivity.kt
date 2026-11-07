@@ -2,6 +2,9 @@
 
 package com.example.animepahedl
 
+import com.example.animepahedl.components.*
+import androidx.compose.animation.animateContentSize
+
 import androidx.core.net.toUri
 import android.Manifest
 import android.content.Intent
@@ -37,40 +40,22 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModelProvider
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.launch
+import coil.imageLoader
 import coil.ImageLoader
 import coil.compose.SubcomposeAsyncImage
 import com.example.animepahedl.ui.theme.AnimepaheDLTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: DownloaderViewModel
-    private val savedFilesObserver = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
-        override fun onChange(selfChange: Boolean) { if (::model.isInitialized) model.refreshSavedFiles() }
-    }
-
+    private lateinit var siteDownload: SiteDownloadViewModel
     override fun onResume() {
         super.onResume()
-        if (::model.isInitialized) {
-            contentResolver.registerContentObserver(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, true, savedFilesObserver)
-            val trees = Exports.all(this).values.map { it.tree }.filter { it.isNotBlank() }.toSet() + AppSettings(this).outputTree
-            trees.filter { it.isNotBlank() }.forEach { tree ->
-                runCatching { contentResolver.registerContentObserver((tree).toUri(), true, savedFilesObserver) }
-            }
-            model.setForeground(true)
-            model.refreshSavedFiles()
-        }
+        if (::model.isInitialized) model.setForeground(true)
     }
-
     override fun onPause() {
         if (::model.isInitialized) model.setForeground(false)
-        contentResolver.unregisterContentObserver(savedFilesObserver)
         super.onPause()
     }
 
@@ -104,22 +89,41 @@ class MainActivity : ComponentActivity() {
                 }
         }
         model = ViewModelProvider(this)[DownloaderViewModel::class.java]
+        siteDownload = ViewModelProvider(this)[SiteDownloadViewModel::class.java]
         openFromIntent(intent)
-        val images = ImageLoader.Builder(this).okHttpClient(AnimeNetwork.client).build()
-        setContent { AnimepaheDLTheme { DownloaderApp(model, images) } }
+        val images = imageLoader
+        setContent { AnimepaheDLTheme { DownloaderApp(model, siteDownload, images) } }
     }
 }
 
 @Composable
-private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
+private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader) {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    var playing by remember { mutableStateOf<String?>(null) }
+    val playbackScope = rememberCoroutineScope()
+    var openingPlayer by remember { mutableStateOf(false) }
     var errorDetails by remember { mutableStateOf(false) }
     var confirmEnqueue by remember { mutableStateOf(false) }
     var removeId by remember { mutableStateOf<String?>(null) }
+    var confirmBulkDelete by remember { mutableStateOf(false) }
+    var bulkMenu by remember { mutableStateOf(false) }
+    var enqueueAfterFolder by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val outputPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val action = enqueueAfterFolder
+        enqueueAfterFolder = null
+        if (uri != null) model.chooseOutputTree(uri) {
+            if (action == "anime") model.downloadSelected()
+            if (action == "sites") siteDownload.downloadSelected()
+        }
+    }
+    fun chooseOutputFolder(action: String? = null) {
+        enqueueAfterFolder = action
+        val initial = model.outputTree.takeIf { it.isNotBlank() }?.toUri() ?: android.provider.DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents", "primary:Download/${model.outputFolder}")
+        outputPicker.launch(initial)
+    }
     val screenState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    val anime = model.selectedAnime
+    val anime = model.selectedAnime.takeUnless { model.siteDownloadSelected }
     BackHandler(enabled = model.selectionMode && model.showDownloads) { model.exitSelection() }
     BackHandler(enabled = !model.selectionMode && (model.showAbout || model.showSettings || model.showDownloads || anime != null)) {
         if (model.selectionMode && model.showDownloads) model.exitSelection() else if (model.showAbout) model.showAbout = false else if (model.showSettings) model.showSettings = false else if (model.showDownloads) model.showDownloads = false else model.back()
@@ -127,25 +131,62 @@ private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (model.showAbout) "About" else if (model.showSettings) "Settings" else if (model.showDownloads) "Downloads" else if (anime != null) "Episodes" else "Explore", maxLines = 1) },
+                expandedHeight = 56.dp,
+                title = { Text(if (model.showDownloads && model.selectionMode) "${model.selectedDownloadIds.size} selected" else if (model.showAbout) "About" else if (model.showSettings) "Settings" else if (model.showDownloads) "Downloads" else if (anime != null) "Episodes" else "Explore", maxLines = 1) },
                 navigationIcon = {
-                    if (model.showAbout || model.showSettings || model.showDownloads || anime != null) IconButton(onClick = {
-                        if (model.selectionMode && model.showDownloads) model.exitSelection() else if (model.showAbout) model.showAbout = false else if (model.showSettings) model.showSettings = false else if (model.showDownloads) model.showDownloads = false else model.back()
+                    if (model.showDownloads && model.selectionMode) IconButton(onClick = model::exitSelection) {
+                        AppSymbol(AppIcon.Close, description = "Exit selection")
+                    } else if (model.showAbout || (anime != null && !model.showDownloads && !model.showSettings)) IconButton(onClick = {
+                        if (model.showAbout) model.showAbout = false else model.back()
                     }) { AppSymbol(AppIcon.Back, description = "Back") }
                 },
-                actions = { IconButton(onClick = model::verifyManually) { AppSymbol(AppIcon.Shield, description = "Verify session") } }
+                actions = {
+                    if (model.showDownloads && model.selectionMode) {
+                        IconButton(onClick = {
+                            val all = model.downloads.map { it.id }.toSet()
+                            if (model.selectedDownloadIds.containsAll(all)) model.clearDownloadSelection() else model.selectDownloads(all)
+                        }) {
+                            AppSymbol(AppIcon.Check, description = "Select all downloads")
+                        }
+                        IconButton(onClick = { confirmBulkDelete = true }, enabled = model.selectedDownloadIds.isNotEmpty() && !model.deletingDownloads) {
+                            AppSymbol(AppIcon.Delete, description = "Delete selected downloads")
+                        }
+                        Box {
+                            IconButton(onClick = { bulkMenu = true }) { AppSymbol(AppIcon.More, description = "More selection actions") }
+                            DropdownMenu(bulkMenu, onDismissRequest = { bulkMenu = false }) {
+                                val selected = model.downloads.filter { it.id in model.selectedDownloadIds }
+                                listOf(DownloadAction.PAUSE to "Pause", DownloadAction.RESUME to "Resume",
+                                    DownloadAction.RETRY to "Retry failed", DownloadAction.RETRY_SAVE to "Retry saves").forEach { (action, label) ->
+                                    if (selected.any { action in it.actions }) DropdownMenuItem(text = { Text(label) }, onClick = {
+                                        bulkMenu = false; model.performSelectionAction(action)
+                                    })
+                                }
+                                DropdownMenuItem(text = { Text("Clear selection") }, enabled = selected.isNotEmpty(), onClick = {
+                                    bulkMenu = false; model.clearDownloadSelection()
+                                })
+                            }
+                        }
+                    } else if (model.showDownloads) {
+                        IconButton(onClick = { model.enterSelection() }, enabled = model.downloads.isNotEmpty()) {
+                            AppSymbol(AppIcon.Check, description = "Select downloads")
+                        }
+                    } else if (!model.siteDownloadSelected && !model.showSettings && !model.showAbout) IconButton(onClick = model::verifyManually) {
+                        AppSymbol(AppIcon.Shield, description = "Verify session")
+                    }
+                }
 
             )
         },
         bottomBar = {
             Column {
             if (anime != null && !model.showDownloads && !model.showSettings) Surface(tonalElevation = 3.dp) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DestinationSummary(outputLabel(model))
-                    if (!model.resolving) Button(onClick = {
-                        confirmEnqueue = true
-                    }, enabled = model.selectedEpisodes.isNotEmpty() && !model.loadingSources && model.availableSources.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-                        Text(androidx.compose.ui.res.pluralStringResource(R.plurals.episodes_selected, model.selectedEpisodes.size, model.selectedEpisodes.size))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) { DestinationSummary(outputLabel(model)) }
+                    if (!model.resolving) Button(onClick = { confirmEnqueue = true },
+                        enabled = !model.checkingExistingFiles && model.selectedEpisodes.isNotEmpty() && !model.loadingSources && model.availableSources.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("Download (${model.selectedEpisodes.size})")
                     }
                 }
             }
@@ -163,27 +204,9 @@ private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
         }
     ) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-        val noticeHeight = maxHeight * 0.3f
+        val noticeHeight = 88.dp
         Column(Modifier.fillMaxSize()) {
         Column(Modifier.heightIn(max = noticeHeight).verticalScroll(rememberScrollState())) {
-            model.pendingPreparation?.let { pending ->
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(if (model.resolving) model.resolvingLabel else "${pending.episodes.size} episodes waiting to prepare",
-                            style = MaterialTheme.typography.bodyMedium)
-                        if (model.resolving) {
-                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(androidx.compose.ui.res.stringResource(R.string.ui_you_can_keep_browsing), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = model::cancelPreparation) { Text(androidx.compose.ui.res.stringResource(R.string.ui_pause)) }
-                            }
-                        } else Row {
-                            TextButton(onClick = model::resumePreparation) { Text(androidx.compose.ui.res.stringResource(R.string.ui_resume)) }
-                            TextButton(onClick = model::discardPreparation) { Text(androidx.compose.ui.res.stringResource(R.string.ui_discard)) }
-                        }
-                    }
-                }
-            }
             if (model.downloadVerificationCount > 0) Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${model.downloadVerificationCount} download(s) need session verification", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -191,7 +214,7 @@ private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
                 }
             }
             model.error?.let { message ->
-                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                AppCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(androidx.compose.ui.res.stringResource(R.string.ui_request_couldn_t_finish), style = MaterialTheme.typography.titleSmall)
@@ -206,12 +229,31 @@ private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
                 }
             }
         }
+            if (!model.showDownloads && !model.showSettings && !model.showAbout && anime == null) {
+                SecondaryTabRow(selectedTabIndex = if (model.siteDownloadSelected) 1 else 0) {
+                    Tab(selected = !model.siteDownloadSelected, onClick = { model.selectExploreSource(false) }, text = { Text("AnimePahe") })
+                    Tab(selected = model.siteDownloadSelected, onClick = { model.selectExploreSource(true) }, text = { Text("Video links") })
+                }
+            }
             when {
                 model.showAbout -> AboutScreen()
                 model.showSettings -> SettingsScreen(model, onAbout = { model.showAbout = true })
-                model.showDownloads -> screenState.SaveableStateProvider("downloads") { DownloadsScreen(model, images, onPlay = { row ->
-                    playing = row.id
+                model.showDownloads -> screenState.SaveableStateProvider("downloads") { DownloadsScreen(model, siteDownload, images, onChooseFolder = { chooseOutputFolder() }, onPlay = { row ->
+                    if (!openingPlayer) {
+                        openingPlayer = true
+                        playbackScope.launch {
+                            try {
+                                openSavedVideo(context, row)?.let { message -> android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show() }
+                            } finally { openingPlayer = false }
+                        }
+                    }
                 }, onRemove = { removeId = it }) }
+                model.siteDownloadSelected -> screenState.SaveableStateProvider("sites") {
+                    SiteDownloadScreen(siteDownload, model, images, onEnqueue = {
+                        if (model.outputAccessGranted && !model.outputCheckRequired) { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); true }
+                        else { chooseOutputFolder("sites"); false }
+                    })
+                }
                 anime != null -> DetailsScreen(model, anime, images)
                 else -> SearchScreen(model, images)
             }
@@ -219,19 +261,27 @@ private fun DownloaderApp(model: DownloaderViewModel, images: ImageLoader) {
     }
     }
     if (confirmEnqueue) AlertDialog(onDismissRequest = { confirmEnqueue = false }, title = { Text(androidx.compose.ui.res.stringResource(R.string.ui_download_selected_episodes)) },
-        text = { Text("${model.selectedEpisodes.size} episodes · ${model.quality} · ${audioLabel(model.audio)}\nSave to ${outputLabel(model)}") },
-        confirmButton = { TextButton(onClick = { confirmEnqueue = false; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); model.downloadSelected() }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_download)) } },
+        text = { Text("${model.selectedEpisodes.size} episodes · ${model.quality} · ${audioLabel(model.audio)}\nSave to ${outputLabel(model)}" + if (!model.outputAccessGranted) "\nChoose the existing downloads folder so matching videos can be reused." else "") },
+        confirmButton = { TextButton(onClick = { confirmEnqueue = false
+            if (model.outputAccessGranted && !model.outputCheckRequired) { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); model.downloadSelected() }
+            else chooseOutputFolder("anime") }) { Text(if (!model.outputAccessGranted || model.outputCheckRequired) "Choose folder" else androidx.compose.ui.res.stringResource(R.string.ui_download)) } },
         dismissButton = { TextButton(onClick = { confirmEnqueue = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_cancel)) } })
+    if (confirmBulkDelete) {
+        val selected = model.downloads.filter { it.id in model.selectedDownloadIds }
+        AlertDialog(onDismissRequest = { confirmBulkDelete = false }, title = { Text("Delete ${selected.size} items?") },
+            text = { Text("This deletes ${selected.count { it.complete }} saved videos and cancels ${selected.count { !it.complete }} unfinished downloads.") },
+            confirmButton = { TextButton(onClick = { confirmBulkDelete = false; model.removeDownloads(selected.map { it.id }.toSet(), selected.filter { it.complete }.map { it.id }.toSet()) }, enabled = selected.isNotEmpty()) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { confirmBulkDelete = false }) { Text("Keep") } })
+    }
     if (errorDetails) AlertDialog(onDismissRequest = { errorDetails = false }, title = { Text(androidx.compose.ui.res.stringResource(R.string.ui_request_details)) },
         text = { Text(model.error.orEmpty(), Modifier.verticalScroll(rememberScrollState())) }, confirmButton = { TextButton(onClick = { errorDetails = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_close)) } })
     model.verification?.let { url -> SessionBrowser(url, onClose = model::closeVerification) }
-    playing?.let { id -> SavedPlayer(id, model.downloads, onClose = { playing = null }, onNext = { playing = it }) }
     removeId?.let { id ->
         val row = model.downloads.firstOrNull { it.id == id }
         AlertDialog(onDismissRequest = { removeId = null },
             title = { Text(if (row?.complete == true) "Delete saved video?" else "Cancel download?") },
             text = { Text("${row?.title.orEmpty()}\n\n${if (row?.complete == true) "This permanently deletes the saved video." else "This cancels the download and removes its partial files."}") },
-            confirmButton = { TextButton(onClick = { model.removeDownload(id); removeId = null }) {
+            confirmButton = { TextButton(onClick = { model.removeDownload(id, deleteSavedFile = row?.complete == true); removeId = null }) {
                 Text(if (row?.complete == true) "Delete" else "Cancel download")
             } },
             dismissButton = { TextButton(onClick = { removeId = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_keep)) } })
@@ -244,22 +294,18 @@ private fun SearchScreen(model: DownloaderViewModel, images: ImageLoader) {
     val visible = sortResults(model.results, model.sort)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
-        if (!model.searched && !model.searching) Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(androidx.compose.ui.res.stringResource(R.string.ui_animepahe), style = MaterialTheme.typography.displayMedium)
-            Text(androidx.compose.ui.res.stringResource(R.string.ui_find_a_story_worth_saving), Modifier.padding(top = 6.dp, start = 16.dp, end = 16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (model.query.isBlank() && !model.searched && !model.searching) {
+            Spacer(Modifier.fillParentMaxHeight(0.12f))
+            Text("Find your next watch", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.headlineSmall)
         }
-        TextField(value = model.query, onValueChange = model::updateQuery,
+        OutlinedTextField(value = model.query, onValueChange = model::updateQuery,
             label = { Text(androidx.compose.ui.res.stringResource(R.string.ui_search_anime)) }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 64.dp),
-            shape = CircleShape, leadingIcon = { IconButton(onClick = { keyboard?.hide(); model.search() }, enabled = model.query.isNotBlank()) { AppSymbol(AppIcon.Browse, description = "Search") } },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 56.dp),
+            shape = MaterialTheme.shapes.medium, leadingIcon = { IconButton(onClick = { keyboard?.hide(); model.search() }, enabled = model.query.isNotBlank()) { AppSymbol(AppIcon.Browse, description = "Search") } },
             trailingIcon = { if (model.query.isNotEmpty()) IconButton(onClick = { model.updateQuery("") }) { AppSymbol(AppIcon.Close, description = "Clear search") } },
-            colors = TextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); model.search() }))
-        FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (model.searched) FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ChoiceMenu(model.sort.label, ResultSort.entries.map { it.label }, "Sort") { label ->
                 model.sort = ResultSort.entries.first { it.label == label }
             }
@@ -278,7 +324,7 @@ private fun SearchScreen(model: DownloaderViewModel, images: ImageLoader) {
         if (model.query.isBlank()) {
             item {
                 FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    model.recentSearches.take(8).forEach { term -> AssistChip(onClick = { model.updateQuery(term) }, label = { Text(term) }) }
+                    model.recentSearches.filter { it.length > 2 }.take(4).forEach { term -> AssistChip(onClick = { model.updateQuery(term) }, label = { Text(term) }) }
                     if (model.recentSearches.isNotEmpty()) TextButton(onClick = model::clearRecentSearches) { Text(androidx.compose.ui.res.stringResource(R.string.ui_clear_history)) }
                 }
             }
@@ -288,14 +334,14 @@ private fun SearchScreen(model: DownloaderViewModel, images: ImageLoader) {
         }
         when {
             model.searching && model.results.isEmpty() -> item { Loading("Searching AnimePahe…") }
-            !model.searched -> item { EmptyState("Good stories, ready to go.", "Find an anime you love, choose your episodes, and keep them for later.") }
+            !model.searched -> Unit
             visible.isEmpty() -> item { EmptyState("No matching anime", "Try another anime title.") }
             else -> {
                 item { Text("${visible.size} results", style = MaterialTheme.typography.bodySmall) }
                 items(visible, key = { it.session }) { anime ->
-                    Card(onClick = { model.open(anime) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Thumbnail(anime.poster, anime.title, images, Modifier.size(80.dp, 112.dp))
+                    AppCard(onClick = { model.open(anime) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Thumbnail(anime.poster, anime.title, images, Modifier.size(56.dp, 80.dp))
                             Column(Modifier.weight(1f).align(Alignment.CenterVertically), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(anime.title, style = MaterialTheme.typography.titleMedium)
                                 Text(listOf(anime.year.ifBlank { "Year unknown" }, anime.type).filter { it.isNotBlank() }.joinToString(" · "),
@@ -313,14 +359,16 @@ private fun SearchScreen(model: DownloaderViewModel, images: ImageLoader) {
 @Composable
 private fun DetailsScreen(model: DownloaderViewModel, anime: Anime, images: ImageLoader) {
     val details = model.details
+    var synopsisExpanded by androidx.compose.runtime.saveable.rememberSaveable(anime.session) { mutableStateOf(false) }
+    var rangeOpen by androidx.compose.runtime.saveable.rememberSaveable(anime.session) { mutableStateOf(false) }
     var rangeStart by androidx.compose.runtime.saveable.rememberSaveable(anime.session) { mutableStateOf("") }
     var rangeEnd by androidx.compose.runtime.saveable.rememberSaveable(anime.session) { mutableStateOf("") }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Thumbnail(anime.poster, anime.title, images, Modifier.size(100.dp, 144.dp))
+                Thumbnail(anime.poster, anime.title, images, Modifier.size(72.dp, 104.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(anime.title, style = MaterialTheme.typography.headlineSmall)
+                    Text(anime.title, style = MaterialTheme.typography.titleLarge)
                     TextButton(onClick = { model.toggleBookmark(anime) }) { Text(if (model.bookmarks.any { it.session == anime.session }) "Remove bookmark" else "Bookmark show") }
                     Text(listOf(anime.year, anime.type, anime.status).filter { it.isNotBlank() }.joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium)
@@ -330,7 +378,12 @@ private fun DetailsScreen(model: DownloaderViewModel, anime: Anime, images: Imag
         if (model.loadingDetails) item { Loading("Loading details and all episodes…") }
         if (details != null) {
             if (details.anime.synopsis.isNotBlank()) item {
-                Text(details.anime.synopsis, style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.animateContentSize()) {
+                    Text(details.anime.synopsis, style = MaterialTheme.typography.bodyMedium,
+                        maxLines = if (synopsisExpanded) Int.MAX_VALUE else 3,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    TextButton(onClick = { synopsisExpanded = !synopsisExpanded }) { Text(if (synopsisExpanded) "Show less" else "Read more") }
+                }
             }
             item {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -351,20 +404,27 @@ private fun DetailsScreen(model: DownloaderViewModel, anime: Anime, images: Imag
                 }
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(rangeStart, { rangeStart = it }, label = { Text(androidx.compose.ui.res.stringResource(R.string.ui_from)) }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(rangeEnd, { rangeEnd = it }, label = { Text(androidx.compose.ui.res.stringResource(R.string.ui_to)) }, singleLine = true, modifier = Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { rangeOpen = !rangeOpen }) { Text(if (rangeOpen) "Hide range" else "Select range") }
+                    TextButton(onClick = model::selectMissingEpisodes) { Text("Select missing") }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = model::clearEpisodes) { AppSymbol(AppIcon.Close, description = "Clear selection") }
+                }
+                androidx.compose.animation.AnimatedVisibility(rangeOpen) { Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(rangeStart, { rangeStart = it }, label = { Text(androidx.compose.ui.res.stringResource(R.string.ui_from)) }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
+                    OutlinedTextField(rangeEnd, { rangeEnd = it }, label = { Text(androidx.compose.ui.res.stringResource(R.string.ui_to)) }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
                 }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { model.selectEpisodeRange(rangeStart, rangeEnd) }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_select_range)) }
-                    TextButton(onClick = model::selectMissingEpisodes) { Text(androidx.compose.ui.res.stringResource(R.string.ui_select_missing)) }
-                    IconButton(onClick = model::clearEpisodes) { AppSymbol(AppIcon.Close, description = "Clear selection") }
                 }
+                }
+            }
             }
             if (details.episodes.isEmpty()) item { Text(androidx.compose.ui.res.stringResource(R.string.ui_no_episodes_have_been_released_yet)) }
             items(details.episodes, key = { it.session }) { episode ->
                 val selected = episode.session in model.selectedEpisodes
-                Card(onClick = { model.toggle(episode) }, modifier = Modifier.semantics { this.selected = selected; role = androidx.compose.ui.semantics.Role.Checkbox },
+                AppCard(onClick = { model.toggle(episode) }, modifier = Modifier.semantics { this.selected = selected; role = androidx.compose.ui.semantics.Role.Checkbox },
                     colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
                         else MaterialTheme.colorScheme.surfaceContainer)) {
                     Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically,
@@ -378,75 +438,6 @@ private fun DetailsScreen(model: DownloaderViewModel, anime: Anime, images: Imag
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChoiceMenu(selected: String, options: List<String>, label: String, enabled: Boolean = true, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        AssistChip(onClick = { expanded = true }, label = { Text("$label: $selected") }, trailingIcon = { AppSymbol(AppIcon.Expand) }, enabled = enabled,
-            shape = CircleShape, border = null,
-            colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-            modifier = Modifier.heightIn(min = 44.dp))
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-            options.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false }) }
-        }
-    }
-}
-
-@Composable
-internal fun Thumbnail(url: String, description: String, images: ImageLoader, modifier: Modifier, cornerRadius: androidx.compose.ui.unit.Dp = 0.dp) {
-    SubcomposeAsyncImage(model = url, imageLoader = images, contentDescription = description,
-        contentScale = ContentScale.Crop, modifier = modifier.clip(RoundedCornerShape(cornerRadius)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        loading = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp)) } },
-        error = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppSymbol(AppIcon.Browse, modifier = Modifier.size(20.dp)) } })
-}
-
-@Composable
-private fun Loading(message: String) {
-    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)) { CircularProgressIndicator(); Text(message) }
-}
-
-@Composable
-private fun EmptyState(title: String, message: String) {
-    Surface(Modifier.fillMaxWidth().padding(20.dp), shape = RoundedCornerShape(32.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.tertiaryContainer) {
-                AppSymbol(AppIcon.Play, modifier = Modifier.padding(16.dp).size(28.dp))
-            }
-            Text(title, style = MaterialTheme.typography.headlineSmall)
-            Text(message, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun OfflinePlayer(id: String, onClose: () -> Unit) {
-    val context = LocalContext.current
-    var failure by remember { mutableStateOf<String?>(null) }
-    val player = remember(id) {
-        val manager = OfflineDownloads.manager(context)
-        val source = CacheDataSource.Factory().setCache(OfflineDownloads.cache)
-            .setUpstreamDataSourceFactory(null).setCacheWriteDataSinkFactory(null)
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(source)).build().apply {
-            addListener(object : androidx.media3.common.Player.Listener {
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) { failure = "Offline playback failed: ${error.errorCodeName}" }
-            })
-            manager.downloadIndex.getDownload(id)?.request?.let { setMediaItem(it.toMediaItem()); prepare(); playWhenReady = true }
-        }
-    }
-    DisposableEffect(player) { onDispose { player.release() } }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.safeDrawingPadding()) {
-                TextButton(onClick = onClose) { Text(androidx.compose.ui.res.stringResource(R.string.ui_close_player)) }
-                failure?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
-                AndroidView(factory = { PlayerView(it).apply { this.player = player } }, modifier = Modifier.fillMaxWidth().weight(1f))
             }
         }
     }

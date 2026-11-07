@@ -15,7 +15,6 @@ import androidx.core.app.NotificationCompat
 import android.text.format.Formatter
 import java.io.File
 import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import com.google.gson.Gson
 
@@ -84,19 +83,39 @@ object OfflineDownloads {
                 if (isNetwork) DownloadSpeed.add(bytesTransferred)
                 val now = android.os.SystemClock.elapsedRealtime()
                 val previous = last.get()
-                if (now - previous >= 250 && last.compareAndSet(previous, now)) updates.tryEmit(Unit)
+                if (now - previous >= 750 && last.compareAndSet(previous, now)) updates.tryEmit(Unit)
             }
-            override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) { updates.tryEmit(Unit) }
+            override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
         }
-        val factory = OkHttpDataSource.Factory(AnimeNetwork.mediaClient).setTransferListener(transferListener)
-            .setDefaultRequestProperties(mapOf("Referer" to "https://kwik.cx/"))
         val connections = AppSettings(app).connections
-        val executor = ThreadPoolExecutor(connections, connections, 30, TimeUnit.SECONDS, LinkedBlockingQueue<Runnable>())
+        val executor = ThreadPoolExecutor(connections, connections, 30, TimeUnit.SECONDS, java.util.concurrent.ArrayBlockingQueue<Runnable>(48), ThreadPoolExecutor.CallerRunsPolicy())
             .apply { allowCoreThreadTimeOut(true) }
         segmentExecutor = executor
-        return DownloadManager(app, database, cache, factory, executor).also {
+        val downloaderFactory = androidx.media3.exoplayer.offline.DownloaderFactory { request ->
+            // Media3 invokes this on its download worker, including after process recovery.
+            // Database loading must finish before choosing this download's HTTP context.
+            kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
+            if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
+            val record = Exports.all(app)[request.id]
+            val media = record?.media
+            val upstream = if (record?.identity?.isSiteDownload == true || request.id.startsWith("sites:")) {
+                requireNotNull(media) { "Video source context is missing. Retry to resolve this episode again." }
+                OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor)).setTransferListener(transferListener)
+                    .setDefaultRequestProperties(mediaRequestHeaders(media))
+            } else {
+                OkHttpDataSource.Factory(AnimeNetwork.mediaClient).setTransferListener(transferListener)
+                    .setDefaultRequestProperties(media?.let(::mediaRequestHeaders) ?: mapOf("Referer" to "https://kwik.cx/"))
+            }
+            val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
+                .setUpstreamDataSourceFactory(upstream)
+            androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(request)
+        }
+        return DownloadManager(app, androidx.media3.exoplayer.offline.DefaultDownloadIndex(database), downloaderFactory).also {
             val retries = app.getSharedPreferences("download-retries", Context.MODE_PRIVATE)
             it.addListener(object : DownloadManager.Listener {
+                override fun onDownloadsPausedChanged(manager: DownloadManager, downloadsPaused: Boolean) {
+                    if (!downloadsPaused && (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null)) manager.pauseDownloads()
+                }
                 override fun onInitialized(manager: DownloadManager) {
                     retryPending(app, manager)
                     updates.tryEmit(Unit)
@@ -141,7 +160,10 @@ object OfflineDownloads {
             it.setRequirements(androidx.media3.exoplayer.scheduler.Requirements(if (AppSettings(app).unmeteredOnly) androidx.media3.exoplayer.scheduler.Requirements.NETWORK_UNMETERED else androidx.media3.exoplayer.scheduler.Requirements.NETWORK))
             it.minRetryCount = 10
             it.maxParallelDownloads = AppSettings(app).simultaneousDownloads
-            it.resumeDownloads()
+            if (hasOutputFolderAccess(app) && DownloadStore.operations("folder-access")["transfers"] == null) it.resumeDownloads() else {
+                it.pauseDownloads()
+                DownloadStore.operation("transfers", "folder-access", "1")
+            }
             instance = it
         }
     }

@@ -18,7 +18,8 @@ internal data class ExportRecord(val title: String, val tree: String, val folder
     val uri: String = "", val error: String = "", val bytes: Long = 0,
     val thumbnail: String? = null, val audio: String? = null, val quality: String? = null,
     val showTitle: String? = null, val episodeNumber: String? = null,
-    val identity: DownloadIdentity? = null, val pendingUri: String? = null)
+    val identity: DownloadIdentity? = null, val pendingUri: String? = null,
+    val media: ResolvedMedia? = null)
 
 internal data class ExportProgress(val stage: String, val percent: Float, val bytes: Long = 0)
 
@@ -30,11 +31,19 @@ internal object Exports {
     /** Emits whenever an export stage or percentage changes. */
     val updates = progressEvents
 
+    private val lastProgressEvents = java.util.concurrent.ConcurrentHashMap<String, Long>()
     fun setProgress(id: String, value: ExportProgress) {
-        if (progress.put(id, value) != value) progressEvents.tryEmit(Unit)
+        val before = progress.put(id, value)
+        if (before == value) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (before?.stage != value.stage || value.percent >= 100 || now - (lastProgressEvents[id] ?: 0L) >= 500) {
+            lastProgressEvents[id] = now
+            progressEvents.tryEmit(Unit)
+        }
     }
 
     fun clearProgress(id: String) {
+        lastProgressEvents.remove(id)
         if (progress.remove(id) != null) progressEvents.tryEmit(Unit)
     }
     private val locks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
@@ -53,16 +62,11 @@ internal object Exports {
         put(context, id, ExportRecord(title, settings.outputTree, settings.outputFolder, thumbnail = thumbnail, audio = audio, quality = quality, showTitle = showTitle, episodeNumber = episodeNumber, identity = identity))
     }
     fun remove(context: Context, id: String) { DownloadStore.remove(id); progressEvents.tryEmit(Unit) }
-    fun cancel(context: Context, id: String) {
-        jobs[id]?.cancel()
-        runCatching {
-            context.startService(Intent(context, ExportService::class.java)
-                .setAction(ExportService.ACTION_CANCEL).putExtra(ExportService.EXTRA_ID, id))
-        }.onFailure { DebugTrace.event("export_cancel_failed", "reason" to it.message) }
-    }
+    fun cancel(context: Context, id: String) { jobs[id]?.cancel() }
     fun register(id: String, job: Job) { jobs[id] = job }
     fun unregister(id: String) { jobs.remove(id) }
     fun start(context: Context) {
+        if (!hasOutputFolderAccess(context) || DownloadStore.operations("folder-access")["transfers"] != null) return
         runCatching { context.startForegroundService(Intent(context, ExportService::class.java)) }
             .onFailure { failure ->
                 all(context).filter { (id, record) -> record.uri.isEmpty() && !deleting(id) }.forEach { (id, record) ->
@@ -143,7 +147,7 @@ class ExportService : Service() {
                 var idleChecks = 0
                 while (isActive) {
                     DownloadStore.flush()
-                    val pending = Exports.all(this@ExportService).filter { (id, record) -> record.uri.isEmpty() && record.error.isEmpty() && !Exports.deleting(id) }
+                    val pending = (if (DownloadStore.operations("folder-access")["transfers"] != null) emptyMap() else Exports.all(this@ExportService)).filter { (id, record) -> record.uri.isEmpty() && record.error.isEmpty() && !Exports.deleting(id) }
                     val next = withContext(Dispatchers.IO) { QueueOrder.ordered(this@ExportService, pending.keys.toList()).firstOrNull { ready(it) }?.let { pending.entries.first { entry -> entry.key == it } } }
                     if (next != null) {
                         idleChecks = 0
@@ -184,26 +188,49 @@ class ExportService : Service() {
                 listOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
         }
     }
-    private suspend fun export(id: String, record: ExportRecord) {
+    private suspend fun export(id: String, original: ExportRecord) {
+        var record = original
         // A foreground notification alone does not keep the CPU running with the screen off.
         wakeLock.acquire(95 * 60_000L)
-        val temp = File(getExternalFilesDir(null) ?: filesDir, "export-temp").apply { mkdirs() }
-            .resolve("${id.hashCode().toUInt()}.mp4")
+        val temp = withContext(Dispatchers.IO) {
+            File(getExternalFilesDir(null) ?: filesDir, "export-temp").apply { mkdirs() }
+                .resolve("${id.hashCode().toUInt()}.mp4")
+        }
         var pendingOutput: OutputDocument? = null
         var outputPublished = false
         try {
+            val tree = record.tree.takeIf { hasOutputFolderAccess(this, it) } ?: AppSettings(this).outputTree
+            if (!hasOutputFolderAccess(this, tree)) throw OutputFolderAccessRequired()
+            record = record.copy(tree = tree)
             record.pendingUri?.takeIf { it.isNotEmpty() }?.let { old ->
                 withContext(Dispatchers.IO) { deleteOwnedMedia(this@ExportService, (old).toUri()) }
-                Exports.put(this, id, record.copy(pendingUri = null))
+                record = record.copy(pendingUri = null)
+                Exports.put(this, id, record)
+                DownloadStore.flush()
             }
+            val existing = withContext(Dispatchers.IO) { findExistingOutput(this@ExportService, record.tree, record.outputLocation("mp4")) }
+            if (existing != null) throw ExistingVideoFound(existing)
             val estimated = if (id.startsWith("direct:")) 0L else withContext(Dispatchers.IO) { OfflineDownloads.manager(this@ExportService).downloadIndex.getDownload(id)?.bytesDownloaded ?: 0L }
-            val available = android.os.StatFs(temp.parentFile!!.absolutePath).availableBytes
+            val available = withContext(Dispatchers.IO) { android.os.StatFs(temp.parentFile!!.absolutePath).availableBytes }
             require(estimated <= 0 || available > estimated * if (record.tree.isBlank()) 2 else 1) { "Not enough space for assembly and final copy. Free storage and Retry save." }
             val direct = id.startsWith("direct:")
-            if (direct) {
-                val source = getSystemService(DownloadManager::class.java)
+            val progressive = !direct && record.identity?.isSiteDownload == true && record.media?.isHls() == false
+            if (direct || progressive) {
+                val source = if (direct) getSystemService(DownloadManager::class.java)
                     .getUriForDownloadedFile(id.removePrefix("direct:").toLong()) ?: error("Downloaded file is unavailable")
-                val extension = if (contentResolver.getType(source) == "video/webm") "webm" else "mp4"
+                else {
+                    Exports.setProgress(id, ExportProgress("Preparing video", -1f))
+                    withExportProgressDeadline(id) { withContext(Dispatchers.IO) {
+                        copyCachedProgressive(id, temp) { copied ->
+                            ensureActive()
+                            Exports.setProgress(id, ExportProgress("Preparing video", if (estimated > 0) copied * 100f / estimated else -1f, copied))
+                        }
+                    } }
+                    Uri.fromFile(temp)
+                }
+                val extension = if (record.media?.mimeType == "video/webm" ||
+                    record.media?.url?.toUri()?.path.orEmpty().endsWith(".webm", true) ||
+                    (direct && contentResolver.getType(source) == "video/webm")) "webm" else "mp4"
                 Exports.setProgress(id, ExportProgress("Copying to folder", 0f))
                 val destination = withExportProgressDeadline(id) { withContext(Dispatchers.IO) { publish(source, record, extension, id) { ensureActive() } } }
                 if (!Exports.all(this).containsKey(id) || Exports.deleting(id)) {
@@ -212,7 +239,12 @@ class ExportService : Service() {
                 }
                 Exports.put(this, id, record.copy(uri = destination.first.toString(), bytes = destination.second, pendingUri = null))
                 DownloadStore.flush()
-                withContext(Dispatchers.IO) { getSystemService(DownloadManager::class.java).remove(id.removePrefix("direct:").toLong()) }
+                if (direct) withContext(Dispatchers.IO) {
+                    val number = id.removePrefix("direct:")
+                    getSystemService(DownloadManager::class.java).remove(number.toLong())
+                    DownloadStore.operation(number, "direct", null)
+                    DownloadStore.flush()
+                } else OfflineDownloads.manager(this).removeDownload(id)
             } else {
                 temp.delete()
                 val destination = withContext(Dispatchers.IO) { createOutputDocument(record, "mp4") }
@@ -223,10 +255,6 @@ class ExportService : Service() {
                 val update: (Int) -> Unit = { Exports.setProgress(id, ExportProgress("Preparing MP4", it.toFloat())) }
                 val started = android.os.SystemClock.elapsedRealtime()
                 withTimeout(30 * 60_000L) { ffmpegRemuxCachedHls(this@ExportService, id, temp, update) }
-                withTimeout(2 * 60_000L) {
-                    Exports.setProgress(id, ExportProgress("Checking MP4", -1f))
-                    runInterruptible(Dispatchers.IO) { validateCachedHlsExport(this@ExportService, id, temp) }
-                }
                 val digest = java.security.MessageDigest.getInstance("SHA-256")
                 withExportProgressDeadline(id) {
                     Exports.setProgress(id, ExportProgress("Copying to folder", -1f))
@@ -252,6 +280,17 @@ class ExportService : Service() {
                 DebugTrace.event("export_assembled", "elapsed_ms" to android.os.SystemClock.elapsedRealtime() - started, "bytes" to bytes)
                 OfflineDownloads.manager(this).removeDownload(id)
             }
+        } catch (found: ExistingVideoFound) {
+            if (Exports.all(this).containsKey(id) && !Exports.deleting(id)) {
+                Exports.put(this, id, record.copy(uri = found.video.uri.toString(), bytes = found.video.bytes, pendingUri = null, error = ""))
+                DownloadStore.flush()
+                if (id.startsWith("direct:")) withContext(Dispatchers.IO) {
+                    val number = id.removePrefix("direct:")
+                    getSystemService(DownloadManager::class.java).remove(number.toLong())
+                    DownloadStore.operation(number, "direct", null)
+                    DownloadStore.flush()
+                } else OfflineDownloads.manager(this).removeDownload(id)
+            }
         } catch (e: TimeoutCancellationException) {
             Exports.all(this)[id]?.takeUnless { Exports.deleting(id) }?.let { Exports.put(this, id, it.copy(error = "Saving exceeded the stage time limit. Retry save; the source is retained.")) }
         } catch (e: CancellationException) { throw e
@@ -271,27 +310,56 @@ class ExportService : Service() {
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private suspend fun copyCachedProgressive(id: String, destination: File, progress: (Long) -> Unit) {
+        val download = OfflineDownloads.manager(this).downloadIndex.getDownload(id)
+            ?: error("Cached media is unavailable. Retry download.")
+        require(download.state == Download.STATE_COMPLETED) { "Download is not complete" }
+        copyCachedProgressive(OfflineDownloads.cache, download.request, download.contentLength, destination, progress)
+    }
+
+    private class ExistingVideoFound(val video: ExistingVideo) : java.io.IOException("The requested video is already saved.")
     private data class OutputDocument(val uri: Uri, val mediaStore: Boolean)
 
+    private fun verifyCreatedName(uri: Uri, record: ExportRecord, extension: String) {
+        val expected = record.outputLocation(extension).fileName
+        val actual = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        if (actual != expected) {
+            // This is our new, empty file; never keep an automatically numbered duplicate.
+            deleteOwnedMedia(this, uri)
+            val found = findExistingOutput(this, record.tree, record.outputLocation(extension))
+            if (found != null) throw ExistingVideoFound(found)
+            throw java.io.IOException("A conflicting file exists. Choose the original downloads folder before retrying.")
+        }
+    }
+
+    private fun outputParent(tree: Uri, location: DownloadLocation): Uri {
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val root = DocumentsContract.buildDocumentUriUsingTree(tree, rootId)
+        val rootName = contentResolver.query(root, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        if (rootName != null && existingVideoName(rootName) == existingVideoName(location.showFolder)) return root
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId)
+        val cursor = contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)
+            ?: throw java.io.IOException("Cannot list the selected folder.")
+        cursor.use {
+            while (it.moveToNext()) if (existingVideoName(it.getString(1).orEmpty()) == existingVideoName(location.showFolder) &&
+                it.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR)
+                return DocumentsContract.buildDocumentUriUsingTree(tree, it.getString(0))
+        }
+        return DocumentsContract.createDocument(contentResolver, root, DocumentsContract.Document.MIME_TYPE_DIR, location.showFolder)
+            ?: error("Cannot create the show folder")
+    }
+
     private fun createOutputDocument(record: ExportRecord, extension: String): OutputDocument {
+        findExistingOutput(this, record.tree, record.outputLocation(extension))?.let { throw ExistingVideoFound(it) }
         val location = record.outputLocation(extension)
         val mime = if (extension == "webm") "video/webm" else "video/mp4"
         val tree = record.tree.takeIf { it.isNotEmpty() }?.let(Uri::parse)
         val uri = if (tree != null) {
-            val rootId = DocumentsContract.getTreeDocumentId(tree)
-            val root = DocumentsContract.buildDocumentUriUsingTree(tree, rootId)
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId)
-            var showDirectory: Uri? = null
-            contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    if (cursor.getString(1) == location.showFolder && cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        showDirectory = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)); break
-                    }
-                }
-            }
-            val parent = showDirectory ?: DocumentsContract.createDocument(contentResolver, root,
-                DocumentsContract.Document.MIME_TYPE_DIR, location.showFolder) ?: error("Cannot create the show folder")
+            val parent = outputParent(tree, location)
             DocumentsContract.createDocument(contentResolver, parent, mime, location.fileName)
                 ?: error("Cannot create file in this folder. Choose the folder again in Settings.")
         } else {
@@ -302,6 +370,7 @@ class ExportService : Service() {
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }) ?: error("Cannot create output file")
         }
+        verifyCreatedName(uri, record, extension)
         return OutputDocument(uri, mediaStore = tree == null)
     }
 
@@ -335,24 +404,13 @@ class ExportService : Service() {
     private fun OutputDocument.delete() { runCatching { deleteOwnedMedia(this@ExportService, uri) } }
 
     private suspend fun publish(source: Uri, record: ExportRecord, extension: String, id: String, checkActive: () -> Unit): Pair<Uri, Long> {
+        findExistingOutput(this, record.tree, record.outputLocation(extension))?.let { throw ExistingVideoFound(it) }
         val location = record.outputLocation(extension)
         val name = location.fileName
         val mime = if (extension == "webm") "video/webm" else "video/mp4"
         val tree = record.tree.takeIf { it.isNotEmpty() }?.let(Uri::parse)
         val uri = if (tree != null) {
-            val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            var showDirectory: Uri? = null
-            contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    if (cursor.getString(1) == location.showFolder && cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        showDirectory = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)); break
-                    }
-                }
-            }
-            val parent = showDirectory ?: DocumentsContract.createDocument(contentResolver, root,
-                DocumentsContract.Document.MIME_TYPE_DIR, location.showFolder) ?: error("Cannot create the show folder")
+            val parent = outputParent(tree, location)
             DocumentsContract.createDocument(contentResolver, parent, mime, name) ?: error("Cannot create file in this folder. Choose the folder again in Settings.")
         } else {
             contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
@@ -362,6 +420,7 @@ class ExportService : Service() {
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }) ?: error("Cannot create output file")
         }
+        verifyCreatedName(uri, record, extension)
         try {
             Exports.put(this, id, record.copy(pendingUri = uri.toString()))
             DownloadStore.flush()

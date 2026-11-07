@@ -35,31 +35,35 @@ class HlsExportTest {
         Exports.all(app).keys.filter { it.startsWith("test-hls-export-") }.forEach { Exports.remove(app, it) }
     }
 
-    @Test fun intactAudioCannotHideATruncatedVideoTrack() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val file = File(instrumentation.targetContext.cacheDir, "short-video-track.mp4")
-        try {
-            instrumentation.context.assets.open("short-video-track.mp4").use { input -> file.outputStream().use { input.copyTo(it) } }
-            val metadata = MediaMetadataRetriever()
-            try {
-                metadata.setDataSource(file.absolutePath)
-                assertTrue(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong() >= 3000)
-            } finally { metadata.release() }
-            val error = runCatching { validateMp4Tracks(file, 3000) }.exceptionOrNull()
-            assertTrue("Must reject the short video track: $error", error?.message?.contains("Incomplete MP4 video/") == true)
-        } finally { file.delete() }
-    }
-
     @Test fun cachedHlsBecomesPlayableMp4AndTemporaryMediaIsRemoved() = verifyExport(1)
 
-    @Test fun truncatedExportRetainsCachedMediaForRetry() = verifyExport(1, expectIncomplete = true)
+    @Test fun missingSegmentRetainsCachedMediaForRetry() = verifyExport(1, expectIncomplete = true)
+
+    @Test fun missingEncryptionKeyRetainsCachedMediaForRetry() = verifyExport(1, assetFolder = "hls-encrypted", expectIncomplete = true, missingResource = "key.bin")
 
     @Test fun ffmpegOutputPreservesTracksAndDuration() = verifyExport(1, directAssembly = true)
+
+    /** Optional device regression: remux a retained download without modifying its record or cache. */
+    @Test fun retainedEpisodeRemuxesWithCompleteSegments() {
+        val id = InstrumentationRegistry.getArguments().getString("retainedDownloadId")
+        assumeTrue("Supply retainedDownloadId to inspect an existing cached episode", !id.isNullOrBlank())
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val app = instrumentation.targetContext
+        instrumentation.runOnMainSync { OfflineDownloads.manager(app) }
+        kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
+        val keepOutput = InstrumentationRegistry.getArguments().getString("keepRetainedExport") == "true"
+        val output = File(app.getExternalFilesDir(null), "retained-episode-validation.mp4")
+        try {
+            kotlinx.coroutines.runBlocking { ffmpegRemuxCachedHls(app, id!!, output) {} }
+        } finally { if (!keepOutput) output.delete() }
+    }
 
 
     @Test fun timestampResetsAcrossDiscontinuitiesKeepEverySegment() = verifyExport(2, repeatPlaylist = true)
 
     @Test fun encryptedHlsExportsWithoutDecoding() = verifyExport(1, assetFolder = "hls-encrypted")
+
+    @Test fun shorterDubbedAudioDoesNotRejectCompleteVideo() = verifyExport(1, assetFolder = "hls-short-audio")
 
     @Test fun fullLengthEpisodeExportsWithoutRepeatedSeekTableRebuilds() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
@@ -100,7 +104,6 @@ class HlsExportTest {
                 }
             }
             android.util.Log.i("HlsExportBenchmark", "inspect elapsed_ms=${android.os.SystemClock.elapsedRealtime() - started} bytes=${output.length()}")
-            validateCachedHlsExport(app, id, output)
         } finally {
             DownloadStore.operation(id, "delete", null)
             (OfflineDownloads.manager(app).downloadIndex as WritableDownloadIndex).removeDownload(id)
@@ -108,7 +111,7 @@ class HlsExportTest {
         }
     }
 
-    private fun verifyExport(repetitions: Int, fixture: File? = null, assetFolder: String = "hls-fixture", expectIncomplete: Boolean = false, repeatPlaylist: Boolean = false, directAssembly: Boolean = false) {
+    private fun verifyExport(repetitions: Int, fixture: File? = null, assetFolder: String = "hls-fixture", expectIncomplete: Boolean = false, repeatPlaylist: Boolean = false, directAssembly: Boolean = false, missingResource: String? = null) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext
         val id = "test-hls-export-${System.currentTimeMillis()}"
@@ -127,7 +130,6 @@ class HlsExportTest {
             resources.forEach { name ->
                 val bytes = fixture?.resolve(name)?.readBytes() ?: assets.open("$assetFolder/$name").use { it.readBytes() }
                 val cachedBytes = when {
-                    expectIncomplete && name == "index.m3u8" -> String(bytes).replace("#EXTINF:1.000000,", "#EXTINF:60.000000,").toByteArray()
                     repeatPlaylist && name == "index.m3u8" -> {
                         val body = String(bytes).substringAfter("#EXT-X-PLAYLIST-TYPE:VOD\n").substringBefore("#EXT-X-ENDLIST")
                         (String(bytes).substringBefore("#EXTINF:") +
@@ -150,22 +152,18 @@ class HlsExportTest {
                 val output = File(app.cacheDir, "$id-remux.mp4")
                 try {
                     kotlinx.coroutines.runBlocking { ffmpegRemuxCachedHls(app, id, output) {} }
-                    validateCachedHlsExport(app, id, output)
                     assertTrue(output.length() > 0)
                     assertTrue(cache.keys.any { it.startsWith(base) })
                 } finally { output.delete() }
                 return
             }
             if (expectIncomplete) {
-                val shortOutput = File(app.cacheDir, "$id.mp4")
-                try {
-                    instrumentation.context.assets.open("short-video-track.mp4").use { input -> shortOutput.outputStream().use { input.copyTo(it) } }
-                    val failure = runCatching { validateCachedHlsExport(app, id, shortOutput) }.exceptionOrNull()
-                    assertTrue("Short MP4 must fail validation: $failure", failure?.message?.contains("Incomplete MP4") == true)
-                    assertTrue("Source must remain available for Retry save", cache.keys.any { it.startsWith(base) })
-                    assertEquals(Download.STATE_COMPLETED, OfflineDownloads.manager(app).downloadIndex.getDownload(id)?.state)
-                    assertTrue("Invalid output must not be published", Exports.all(app)[id]?.uri.isNullOrEmpty())
-                } finally { shortOutput.delete() }
+                cache.removeResource(base + (missingResource ?: resources.first { it.endsWith(".ts") }))
+                val failure = runCatching { requireCachedHlsSegments(app, id) }.exceptionOrNull()
+                assertTrue("Missing segment must fail validation: $failure", failure?.message?.contains("missing or incomplete") == true)
+                assertTrue("Source must remain available for Retry save", cache.keys.any { it.startsWith(base) })
+                assertEquals(Download.STATE_COMPLETED, OfflineDownloads.manager(app).downloadIndex.getDownload(id)?.state)
+                assertTrue("Invalid output must not be published", Exports.all(app)[id]?.uri.isNullOrEmpty())
                 return
             }
             val watchdog = java.util.Timer(true)

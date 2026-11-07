@@ -6,7 +6,12 @@ import java.io.IOException
 import java.util.Locale
 
 data class EpisodeSource(val url: String, val quality: String, val audio: String, val preferred: Boolean = false)
-data class ResolvedMedia(val url: String, val quality: String, val audio: String)
+data class ResolvedMedia(val url: String, val quality: String, val audio: String,
+    val headers: Map<String, String> = emptyMap(), val backupUrls: List<String> = emptyList(),
+    val mimeType: String? = null) {
+    // Resolvers may return signed URLs and cookies; never include either in diagnostics.
+    override fun toString() = "ResolvedMedia(quality=$quality, audio=$audio, mimeType=$mimeType)"
+}
 
 internal fun parseEpisodeSources(html: String): List<EpisodeSource> = Jsoup.parse(html).select("button[data-src]").mapNotNull { button ->
     val url = runCatching { button.attr("data-src").toHttpUrl() }.getOrNull() ?: return@mapNotNull null

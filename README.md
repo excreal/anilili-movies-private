@@ -94,7 +94,7 @@ the current site's protection accepts Android sessions.
 
 ## Build
 
-Use Android SDK 37 and a compatible JDK (21 recommended):
+Use Android SDK 37.0, NDK 28.2.13676358, and JDK 25 (the Gradle daemon toolchain):
 
 ```sh
 ./build.sh debug --test
@@ -108,6 +108,32 @@ local unit tests. It works from any directory and uses the Gradle wrapper.
 
 Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Minimum Android: 15 (API 35).
 Release APKs are unsigned unless all signing variables below are configured.
+
+## Video links
+
+Explore has separate **AnimePahe** and **Video links** tabs. Paste a
+Dramatip, Kiss18, Narto Drama, or EroticMV link,
+or a direct HTTP(S) HLS/MP4/M4V/WebM URL, then choose **Inspect**. Review the series,
+quality, and selected episodes before downloading. Standalone videos have a
+single **Download video** action. TikTok is excluded. Episode selection accepts
+`1-5,9`; blank means all, while **Clear selection** writes `none` and selects zero.
+If the exact requested quality is unavailable, the resolver chooses the highest
+available quality at or below it, or the lowest available quality when all are
+higher. **Best** selects the highest available profile.
+
+**Import session cookies** accepts Netscape cookie files with domain information. Imports honor
+domain, path, secure, and expiry attributes. Cookies remain in app-private storage
+and are excluded from diagnostics. Use your own current session when a provider
+requires it. Provider availability still depends on its current responses.
+
+AnimePahe and video-link preparation have separate persistent background batches.
+WorkManager continues preparation away from the screen, waits for connectivity,
+and retries temporary failures with exponential backoff. Manage Pause, Resume,
+or Discard from the compact Downloads status row. Explicit session verification
+still requires the verification screen; the remaining batch then resumes. Download retries resolve the original provider
+again. HLS and direct video-link files use Media3 with per-download request
+context; direct files are copied from the cache without re-encoding. HLS saving
+still requires an ARM64 device for the bundled FFmpeg executable.
 
 ## Device verification
 
@@ -144,7 +170,10 @@ at [FFmpeg n9.0](https://github.com/FFmpeg/FFmpeg/tree/n9.0). The upstream
 binary SHA-256 is `9085507b0dc32643b4d6d084a7e7d3469ef17907a7ba15c22d3997ed09c932aa`.
 The executable supports arm64-v8a only. HLS downloads use the existing Media3
 network downloader; FFmpeg reads its cache via a loopback server and stream-copies
-media into MP4. The output is checked before it is published.
+media into MP4. Every selected playlist's segments, keys, and initialization data
+must be fully cached before remuxing. Audio and video durations are not required
+to match (dubbed tracks can legitimately be shorter). FFmpeg must finish
+successfully, and the final copy is integrity-checked before publication.
 
 ## Release checks
 
@@ -154,6 +183,11 @@ personal release, create and back up a private keystore outside the repository,
 then configure `ANIMEPAHE_KEYSTORE`, `ANIMEPAHE_STORE_PASSWORD`,
 `ANIMEPAHE_KEY_ALIAS`, and `ANIMEPAHE_KEY_PASSWORD` in the build environment.
 Run `./build.sh release`, then verify with SDK `apksigner verify --verbose`.
+For local signing, `build.sh` also loads `.signing/release.env` when no
+`ANIMEPAHE_KEYSTORE` is already set. This ignored file exports the same four
+variables. Back up the entire `.signing/` directory securely, including the
+keystore and credentials; neither belongs in Git. For direct Gradle builds,
+load the environment first with `source .signing/release.env`.
 Keep the same key for every upgrade; losing it prevents an in-place update.
 Increment `versionCode` for every distributed APK and update `versionName`.
 Never commit a keystore or passwords. Without these variables the release build
@@ -168,15 +202,29 @@ A passing build or fixture export does not establish live-site compatibility.
 
 ## Library and recovery tools
 
+Downloads uses compact show groups with circular progress and saving/downloading
+status even when collapsed. Search and sort share a row. Filtering/grouping runs
+off the UI thread and progress refresh is throttled; the library does not poll
+while hidden. Confirmed external deletions are reconciled on provider changes
+and on returning to the app.
+
 - Explore offers sorting, recent searches with a Clear history action, and bookmarked shows. Open a show to bookmark it or remove its bookmark.
 - **Select missing** selects episodes without a healthy job in the current quality/audio variant. Source options continue to be checked across the whole selection.
 - Downloads → episode actions → **Move to front** prioritizes the item for saving and gives an eligible HLS transfer the connection pool by pausing other HLS jobs. Resume the other jobs when ready. Android manages direct-file ordering separately.
-- Saved videos use the internal player. Playback position persists every five seconds and on close; the next saved episode in the same quality/audio variant is available in the player. Playback pauses when the app leaves the foreground.
-- Missing saved files remain in the library with a repair explanation. Use **Relink video** to choose a moved file, or **Remove record; keep file** to remove only its library entry. These actions are separate from permanent media deletion.
+- Saved videos open in Android's system default video player via ACTION_VIEW. The app grants temporary read access to the selected file; playback controls and position history belong to that player. Files are not re-encoded, and no playback engine is bundled.
+- MediaStore/Downloads and selected folders are monitored while the app is visible, with a foreground polling fallback for document providers. Confirmed deleted files are removed from the library automatically. Permission loss or an unavailable provider does not count as deletion. **Relink video** and **Remove record; keep file** remain available for other repairs.
 - Settings → **Storage and recovery** reports available app-volume space, retained temporary bytes, failed saves, and inaccessible files. Export also checks estimated assembly space before starting. Document providers may have a separate capacity limit which Android does not expose.
-- Settings → **Unmetered downloads** updates HLS requirements immediately. Newly queued direct downloads use Wi-Fi and disallow roaming; existing direct downloads retain the policy they were queued with.
+- Settings → **Unmetered downloads** updates app-managed HLS and site-file transfers immediately. Existing Android-managed direct downloads retain the network policy they were queued with.
 - Settings → **Source health** shows recent request outcomes and verification information. Browser verification alone does not prove that HTTP requests will be accepted.
 - Settings → **Export diagnostics** previews a summary before saving it through the document picker. The summary omits titles, paths, cookies, and media URLs.
 - HLS notifications provide Pause/Resume actions. Transfer completion and saving remain distinct; a video becomes available after final output verification.
 
 Database metadata is published to the app only after its ordered write commits. A failed write stays queued for retry, and critical transitions cannot pass the persistence barrier until it succeeds. The Room v1 schema is exported under `app/schemas`; future schema changes must supply and test migrations. The obsolete Transformer/direct-muxer implementation and dependencies have been removed. HLS export and its fixtures use FFmpeg.
+
+After reinstalling, use **Choose folder** in Downloads and select the original
+`Download/Animepahe` folder, or the existing show folder. Android requires this
+folder grant to see files from the previous installation. Matching episode,
+quality and language files are reused before download; queued duplicates are
+reconciled when the folder is chosen. Install subsequent APKs as updates to retain
+library records and folder access. Selection controls live in the top app bar;
+additional eligible actions are in its overflow menu.

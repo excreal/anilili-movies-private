@@ -21,11 +21,11 @@ internal fun ExportRecord.outputLocation(extension: String): DownloadLocation {
     val source = identity
     val parts = title.split(" · ")
     return downloadLocation(source?.anime?.title ?: showTitle ?: parts.first(),
-        source?.episode?.number ?: episodeNumber ?: parts.getOrNull(1)?.removePrefix("Episode "),
-        source?.quality ?: quality ?: parts.getOrNull(2)?.takeIf { it != "Best" }, extension,
-        source?.audio ?: audio ?: parts.getOrNull(3))
+        if (source?.isSingleVideo == true) null else source?.episode?.number ?: episodeNumber ?: parts.getOrNull(1)?.removePrefix("Episode "),
+        quality ?: source?.quality ?: parts.getOrNull(2)?.takeIf { it != "Best" }, extension,
+        audio ?: source?.audio ?: parts.getOrNull(3))
 }
 
 internal fun ExportRecord.episodeTitle(): String = identity?.let {
-    "${it.anime.title} · Episode ${it.episode.number} · ${it.quality} · ${audioTag(it.audio)}"
+    it.anime.title + (if (it.isSingleVideo) "" else " · Episode ${it.episode.number}") + " · ${quality ?: it.quality} · ${audioTag(audio ?: it.audio)}"
 } ?: title

@@ -1,6 +1,9 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.example.animepahedl
 
+import com.example.animepahedl.components.*
+import androidx.compose.animation.animateContentSize
+
 import androidx.core.net.toUri
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -11,12 +14,15 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,6 +35,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
 import coil.ImageLoader
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +60,7 @@ internal fun outputLabel(model: DownloaderViewModel): String = if (model.outputT
     else runCatching { DocumentsContract.getTreeDocumentId((model.outputTree).toUri()).replace(':', '/') }.getOrDefault("Selected folder")
 
 @Composable
-internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, onPlay: (DownloadRow) -> Unit, onRemove: (String) -> Unit) {
+internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader, onChooseFolder: () -> Unit, onPlay: (DownloadRow) -> Unit, onRemove: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var expandedGroups by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var relinkId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -70,41 +78,34 @@ internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, on
     detailRow?.let { row -> AlertDialog(onDismissRequest = { detailRow = null }, title = { Text(androidx.compose.ui.res.stringResource(R.string.ui_download_details)) },
         text = { Text("${row.title}\n\n${row.status}\n\n${outputLabel(model)}", Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = { TextButton(onClick = { detailRow = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_close)) } }) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    val ready = model.downloads.count { it.complete }
-    val active = model.downloads.count { !it.complete && !it.failed }
     var downloadSort by rememberSaveable { mutableStateOf("Show title") }
-    val matching = model.downloads.filter { it.title.contains(query.trim(), ignoreCase = true) }
-    val visible = when (downloadSort) {
-        "Status" -> matching.sortedBy { it.status }
-        "Largest" -> matching.sortedByDescending { it.bytes }
-        else -> matching.sortedBy { it.showTitle.ifBlank { it.title }.lowercase() }
+    val allRows = model.downloads
+    val snapshot by produceState(DownloadLibrarySnapshot(), allRows, query, downloadSort) {
+        val previous = value
+        value = withContext(Dispatchers.Default) { downloadLibrarySnapshot(allRows, query, downloadSort, previous) }
     }
+    val ready = snapshot.ready
+    val active = snapshot.unfinished
+    val visible = snapshot.rows
     val context = LocalContext.current
-    if (confirmDelete) {
-        val selected = model.downloads.filter { it.id in model.selectedDownloadIds }
-        val saved = selected.count { it.complete }
-        AlertDialog(onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete ${selected.size} items?") },
-            text = { Text("This deletes $saved saved videos and cancels ${selected.size - saved} unfinished downloads.") },
-            confirmButton = { TextButton(onClick = { confirmDelete = false; model.removeDownloads(selected.map { it.id }.toSet()) }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_delete)) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_keep)) } })
-    }
-    LazyColumn(Modifier.fillMaxSize().testTag("downloads-list"), state = listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (model.selectionMode) item {
-            FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (model.selectionMode) {
-                    Text("${model.selectedDownloadIds.size} selected", Modifier.padding(vertical = 12.dp))
-                    TextButton(onClick = { model.selectDownloads(visible.map { it.id }.toSet()) }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_select_all)) }
-                    TextButton(onClick = { confirmDelete = true }, enabled = model.selectedDownloadIds.isNotEmpty() && !model.deletingDownloads) { Text(androidx.compose.ui.res.stringResource(R.string.ui_delete)) }
-                    TextButton(onClick = model::exitSelection) { Text(androidx.compose.ui.res.stringResource(R.string.ui_done)) }
-                    listOf(DownloadAction.RETRY to "Retry failed", DownloadAction.RETRY_SAVE to "Retry saves", DownloadAction.PAUSE to "Pause eligible", DownloadAction.RESUME to "Resume eligible").forEach { (action, label) ->
-                        TextButton(onClick = { model.performSelectionAction(action) }, enabled = !model.deletingDownloads && model.downloads.any { it.id in model.selectedDownloadIds && action in it.actions }) { Text(label) }
-                    }
-                } else TextButton(onClick = { model.enterSelection() }, enabled = model.downloads.isNotEmpty()) { Text(androidx.compose.ui.res.stringResource(R.string.ui_select)) }
+    LazyColumn(Modifier.fillMaxSize().testTag("downloads-list"), state = listState, contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (!model.outputAccessGranted || model.outputCheckRequired || model.checkingExistingFiles) item(key = "output-folder-access") {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (model.checkingExistingFiles) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
+                Text(if (model.checkingExistingFiles) "Checking existing videos…" else "Link your downloads folder to reuse saved videos.",
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                if (!model.checkingExistingFiles) TextButton(onClick = onChooseFolder) { Text("Choose folder") }
             }
         }
+        model.pendingPreparation?.let { pending -> item(key = "anime-preparation") {
+            PreparationStatusRow(model.preparationStatus, pending.episodes.size, model::cancelPreparation,
+                model::resumePreparation, model::discardPreparation, model::verifyPreparation, onChooseFolder)
+        } }
+        siteDownload.pending?.let { pending -> item(key = "site-preparation") {
+            PreparationStatusRow(siteDownload.preparationStatus, pending.episodes.size, siteDownload::pausePreparation,
+                siteDownload::resumePreparation, siteDownload::discardPreparation, onChooseFolder = onChooseFolder)
+        } }
         model.downloadNotice?.let { notice -> item {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
                 Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -114,36 +115,41 @@ internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, on
             }
         } }
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(androidx.compose.ui.res.stringResource(R.string.ui_your_offline_collection), style = MaterialTheme.typography.titleLarge)
-                    Text("$ready saved · $active unfinished", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (!model.selectionMode) IconButton(onClick = { model.enterSelection() }, enabled = model.downloads.isNotEmpty()) {
-                    AppSymbol(AppIcon.Check, description = "Select downloads")
-                }
-            }
-            Text("${Formatter.formatShortFileSize(context, model.downloads.filter { it.complete }.sumOf { it.bytes })} saved · ${Formatter.formatShortFileSize(context, model.temporaryBytes)} temporary", style = MaterialTheme.typography.bodySmall)
+            Text("$ready saved · $active unfinished · ${Formatter.formatShortFileSize(context, snapshot.savedBytes)}" +
+                if (model.temporaryBytes > 0) " · ${Formatter.formatShortFileSize(context, model.temporaryBytes)} temporary" else "",
+                modifier = Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
-        item {
+        if (model.downloads.isNotEmpty()) item {
             var sortMenu by remember { mutableStateOf(false) }
-            Box {
-                TextButton(onClick = { sortMenu = true }) { Text("Sort: $downloadSort") }
-                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                    listOf("Show title", "Status", "Largest").forEach { option ->
-                        DropdownMenuItem(text = { Text(option) }, onClick = { downloadSort = option; sortMenu = false })
+            Row(Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                verticalAlignment = Alignment.CenterVertically) {
+                AppSymbol(AppIcon.Browse, Modifier.padding(start = 12.dp, end = 8.dp).size(20.dp))
+                BasicTextField(query, { query = it; model.clearDownloadSelection() }, singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).padding(vertical = 12.dp).testTag("downloads-search").semantics { contentDescription = "Search downloads" },
+                    decorationBox = { field -> Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) Text("Search downloads", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        field()
+                    } })
+                if (query.isNotEmpty()) IconButton(onClick = { query = ""; model.clearDownloadSelection() }) {
+                    AppSymbol(AppIcon.Close, description = "Clear search")
+                }
+                Box {
+                    IconButton(onClick = { sortMenu = true }) { AppSymbol(AppIcon.Sort, description = "Sort: $downloadSort") }
+                    DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                        listOf("Show title", "Status", "Largest").forEach { option ->
+                            DropdownMenuItem(text = { Text(option) }, onClick = { downloadSort = option; sortMenu = false },
+                                trailingIcon = { if (downloadSort == option) AppSymbol(AppIcon.Check) })
+                        }
                     }
                 }
             }
         }
-        if (model.downloads.isNotEmpty()) item {
-            OutlinedTextField(value = query, onValueChange = { query = it; model.clearDownloadSelection() }, singleLine = true,
-                placeholder = { Text(androidx.compose.ui.res.stringResource(R.string.ui_find_downloaded_episodes)) }, leadingIcon = { AppSymbol(AppIcon.Browse) },
-                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = ""; model.clearDownloadSelection() }) { AppSymbol(AppIcon.Close, description = "Clear search") } },
-                modifier = Modifier.fillMaxWidth().testTag("downloads-search").padding(bottom = 6.dp))
-        }
-        if (visible.isEmpty()) item {
+        if (visible.isEmpty() && snapshot.source === allRows) item {
             Column(Modifier.fillMaxWidth().padding(vertical = 36.dp), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -156,13 +162,16 @@ internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, on
                 if (query.isBlank()) FilledTonalButton(onClick = { model.showDownloads = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_explore_anime)) }
             }
         }
-        visible.groupBy { it.showId.ifBlank { it.showTitle.ifBlank { it.title.substringBefore(" · ") } } }.entries.sortedWith(compareBy<Map.Entry<String, List<DownloadRow>>> { entry -> when (downloadSort) { "Status" -> entry.value.minOf { it.status }; "Largest" -> ""; else -> entry.value.first().showTitle.ifBlank { entry.value.first().title }.lowercase() } }.thenByDescending { if (downloadSort == "Largest") it.value.sumOf { row -> row.bytes } else 0L }).forEach { (groupId, episodes) ->
+        snapshot.groups.forEach { (groupId, episodes) ->
             val show = episodes.first().showTitle.ifBlank { episodes.first().title.substringBefore(" · ") }
+            val preparingLinks = (model.resolving && model.pendingPreparation?.anime?.session == groupId) ||
+                (siteDownload.preparing && siteDownload.pending?.series?.let { "sites:${it.provider.name}:${it.id}" } == groupId)
+            val groupProgress = downloadGroupProgress(episodes, preparingLinks)
             item(key = "group:$groupId") {
-                Surface(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = if (groupId !in expandedGroups) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(20.dp)) {
+                Surface(Modifier.fillMaxWidth().padding(vertical = 2.dp), color = if (groupId !in expandedGroups) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
                     Row(Modifier.semantics { stateDescription = if (groupId !in expandedGroups) "Collapsed" else "Expanded" }.combinedClickable(onClickLabel = if (groupId !in expandedGroups) "Show episodes" else "Hide episodes", onClick = {
                         expandedGroups = if (groupId in expandedGroups) expandedGroups - groupId else expandedGroups + groupId
-                    }, onLongClick = { model.selectDownloads(episodes.map { it.id }.toSet()) }).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    }, onLongClick = { model.selectDownloads(episodes.map { it.id }.toSet()) }).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (model.selectionMode) {
                             val count = episodes.count { it.id in model.selectedDownloadIds }
                             TriStateCheckbox(state = when (count) {
@@ -174,23 +183,37 @@ internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, on
                                 model.selectDownloads(if (count == episodes.size) model.selectedDownloadIds - ids else model.selectedDownloadIds + ids)
                             })
                         }
-                        episodes.firstOrNull { it.thumbnail.isNotBlank() }?.let { Thumbnail(it.thumbnail, show, images, Modifier.size(48.dp, 68.dp), cornerRadius = 8.dp) }
+                        episodes.firstOrNull { it.thumbnail.isNotBlank() }?.let { Thumbnail(it.thumbnail, show, images, Modifier.size(34.dp, 46.dp), cornerRadius = 6.dp) }
                         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                            Text(show, style = MaterialTheme.typography.titleSmall)
-                            Text(if (groupId !in expandedGroups) "${episodes.size} episodes · Collapsed" else "${episodes.size} episodes · Expanded", style = MaterialTheme.typography.labelMedium)
-                            Text(listOfNotNull("${episodes.count { it.complete }} saved", episodes.count { it.failed }.takeIf { it > 0 }?.let { "$it failed" }).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                            Text(show, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text(listOfNotNull(groupProgress.label.takeUnless { it == "Saved" }?.let { status ->
+                                status + groupProgress.percent?.let { " ${it.toInt()}%" }.orEmpty()
+                            }, "${episodes.count { it.complete }} saved",
+                                episodes.count { it.failed }.takeIf { it > 0 && !groupProgress.failed }?.let { "$it failed" }).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (groupProgress.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
+                        Box(Modifier.padding(end = 8.dp).size(26.dp), contentAlignment = Alignment.Center) {
+                            when {
+                                groupProgress.running && groupProgress.percent != null -> CircularProgressIndicator(
+                                    progress = { groupProgress.percent / 100f }, modifier = Modifier.fillMaxSize(), strokeWidth = 2.5.dp)
+                                groupProgress.running -> CircularProgressIndicator(Modifier.fillMaxSize(), strokeWidth = 2.5.dp)
+                                groupProgress.failed -> AppSymbol(AppIcon.Info, description = groupProgress.label)
+                                groupProgress.label == "Saved" -> AppSymbol(AppIcon.Check, description = "All videos saved")
+                                groupProgress.label == "Paused" -> AppSymbol(AppIcon.Pause, description = "Paused")
+                                else -> AppSymbol(AppIcon.Download, description = groupProgress.label)
+                            }
                         }
                         val angle by animateFloatAsState(if (groupId !in expandedGroups) -90f else 180f, tween(160), label = "Group expansion")
                         AppSymbol(AppIcon.Expand, modifier = Modifier.rotate(angle).semantics { stateDescription = if (groupId !in expandedGroups) "Collapsed" else "Expanded" })
                     }
                 }
             }
-            if (groupId in expandedGroups) items(episodes.sortedWith(compareBy<DownloadRow> {
-                it.episodeNumber.toDoubleOrNull() ?: it.title.split(" · ").getOrNull(1)?.removePrefix("Episode ")?.toDoubleOrNull() ?: Double.MAX_VALUE
-            }.thenBy { it.title }), key = { it.id }) { row ->
+            if (groupId in expandedGroups) items(episodes, key = { it.id }) { row ->
                 val parts = row.title.split(" · ")
                 var menu by remember { mutableStateOf(false) }
-                Card(Modifier.fillMaxWidth().padding(start = 12.dp).combinedClickable(
+                AppCard(Modifier.fillMaxWidth().padding(start = 6.dp).combinedClickable(
                     onClickLabel = if (model.selectionMode) "Toggle selection" else if (row.complete) "Play ${row.title}" else null,
                     onClick = { if (model.selectionMode) model.toggleDownload(row.id) else if (row.complete) onPlay(row) },
                     onLongClick = { model.enterSelection(row.id) }),
@@ -201,7 +224,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, images: ImageLoader, on
                                 onCheckedChange = { model.toggleDownload(row.id) })
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.Center) {
-                                    Text(parts.getOrNull(1) ?: parts.first(), style = MaterialTheme.typography.labelLarge,
+                                    Text(if (row.showId.startsWith("sites:") && row.episodeNumber == "1" && !row.title.contains(" · Episode ")) row.showTitle.ifBlank { parts.first() } else parts.getOrNull(1) ?: parts.first(), style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.onSurface)
                                     Text(listOfNotNull(row.quality ?: parts.getOrNull(2),
                                         row.audioCode?.let(::audioTag) ?: parts.getOrNull(3),
@@ -271,7 +294,7 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit) {
     var editFolder by remember { mutableStateOf(false) }
     var folder by remember(model.outputFolder) { mutableStateOf(model.outputFolder) }
     var invalid by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(model::chooseOutputTree) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let { model.chooseOutputTree(it) } }
     val busy = model.resolving || model.searching || model.loadingDetails || model.loadingSources || model.clearingSession
     var showHealth by remember { mutableStateOf(false) }
     if (showHealth) AlertDialog(onDismissRequest = { showHealth = false }, title = { Text("Source health") }, text = { Text(model.sourceHealthHistory() + "\n\nBrowser verification does not guarantee HTTP acceptance.", Modifier.verticalScroll(rememberScrollState())) }, confirmButton = { TextButton(onClick = { showHealth = false; model.verifyManually() }) { Text("Verify") } }, dismissButton = { TextButton(onClick = { showHealth = false }) { Text("Close") } })
@@ -303,14 +326,15 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit) {
         confirmButton = { TextButton(onClick = { exportingDiagnostic = preview; diagnosticPreview = null; diagnosticPicker.launch("animepahe-diagnostics.txt") }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_save_report)) } },
         dismissButton = { TextButton(onClick = { diagnosticPreview = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_cancel)) } }) }
     var choice by remember { mutableStateOf<String?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
         item {
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(androidx.compose.ui.res.stringResource(R.string.ui_unmetered_downloads)); Text(androidx.compose.ui.res.stringResource(R.string.ui_hls_uses_unmetered_networks_new_direct_files_use_wi_fi), style = MaterialTheme.typography.bodySmall) }
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppSymbol(AppIcon.Download, modifier = Modifier.size(24.dp))
+                Column(Modifier.weight(1f)) { Text(androidx.compose.ui.res.stringResource(R.string.ui_unmetered_downloads), style = MaterialTheme.typography.titleSmall); Text(androidx.compose.ui.res.stringResource(R.string.ui_hls_uses_unmetered_networks_new_direct_files_use_wi_fi), style = MaterialTheme.typography.bodySmall) }
                 Switch(checked = model.unmeteredOnly, onCheckedChange = model::setUnmetered)
             }
         }
-        item { Text("Temporary storage: ${Formatter.formatShortFileSize(LocalContext.current, model.temporaryBytes)}", Modifier.padding(12.dp)) }
+        item { Text("Temporary storage: ${Formatter.formatShortFileSize(LocalContext.current, model.temporaryBytes)}", Modifier.padding(start = 36.dp, top = 4.dp, bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item { SettingsRow(AppIcon.Folder, "Download storage", outputLabel(model)) { choice = "storage" } }
         item { SettingsRow(AppIcon.Play, "Default audio", if (model.defaultAudio == "Original") "Source default" else audioLabel(model.defaultAudio)) { choice = "audio" } }
         item { SettingsRow(AppIcon.Download, "Download speed", "${model.simultaneousDownloads} at a time") { choice = "speed" } }
@@ -388,24 +412,6 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit) {
         } }, confirmButton = { TextButton(onClick = { if (model.saveOutputFolder(folder)) editFolder = false else invalid = true }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_save)) } },
         dismissButton = { TextButton(onClick = { editFolder = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_cancel)) } })
 }
-
-@Composable
-private fun SettingsRow(icon: AppIcon, title: String, value: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            AppSymbol(icon, modifier = Modifier.size(22.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            AppSymbol(AppIcon.Next)
-        }
-    }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-}
-
 
 @Composable
 internal fun AboutScreen() {

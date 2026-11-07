@@ -44,6 +44,14 @@ fi
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$project_dir"
+if [[ $variant != debug && -z ${ANIMEPAHE_KEYSTORE:-} && -f .signing/release.env ]]; then
+    source .signing/release.env
+    # A migrated checkout can retain the old machine's absolute keystore path.
+    if [[ -n ${ANIMEPAHE_KEYSTORE:-} && ! -f $ANIMEPAHE_KEYSTORE ]]; then
+        local_keystore="$project_dir/.signing/$(basename -- "$ANIMEPAHE_KEYSTORE")"
+        if [[ -f $local_keystore ]]; then export ANIMEPAHE_KEYSTORE=$local_keystore; fi
+    fi
+fi
 release_apk=app/build/outputs/apk/release/app-release-unsigned.apk
 if [[ $variant != debug ]]; then
     signing_count=0

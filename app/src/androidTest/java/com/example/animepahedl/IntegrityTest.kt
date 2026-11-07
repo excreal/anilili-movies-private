@@ -30,8 +30,13 @@ class IntegrityTest {
         try {
             instrumentation.context.assets.open("silent-video.mp4").use { input -> file.outputStream().use { input.copyTo(it) } }
             // The fixture has a one-second video track; presence is checked independently of duration.
-            val failure = runCatching { validateMp4Tracks(file, 1000, requireAudio = true) }.exceptionOrNull()
-            assertTrue(failure?.message?.contains("expected audio") == true)
+            val executable = java.io.File(instrumentation.targetContext.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so")
+            val process = ProcessBuilder(executable.absolutePath, "-nostdin", "-v", "error", "-i", file.absolutePath,
+                "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "null", "-").redirectErrorStream(true).start()
+            try {
+                val message = process.inputStream.bufferedReader().readText()
+                assertNotEquals(message, 0, process.waitFor())
+            } finally { if (process.isAlive) process.destroyForcibly() }
         } finally { file.delete() }
     }
 }
