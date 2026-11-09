@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -43,7 +44,7 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
             pager.animateScrollToPage((pager.settledPage + 1) % featured.size)
         }
     }
-    Box(Modifier.fillMaxWidth().height(490.dp).then(if (backdrop != null) Modifier.hazeSource(backdrop) else Modifier)) {
+    Box(Modifier.fillMaxWidth().height(490.dp).clipToBounds().then(if (backdrop != null) Modifier.hazeSource(backdrop) else Modifier)) {
         HorizontalPager(pager, modifier = Modifier.fillMaxSize(), key = { featured[it].url }) { index ->
             val item = featured[index]
             val context = LocalContext.current
@@ -64,6 +65,13 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
                     0f to Color.Black.copy(alpha = .30f), .42f to Color.Black.copy(alpha = .12f),
                     .72f to Color.Black.copy(alpha = .45f), 1f to canvas,
                 )))
+                // Fade each slide into the page background so artwork never ends at a hard edge.
+                Box(Modifier.fillMaxWidth().height(132.dp).align(Alignment.TopCenter).background(
+                    Brush.verticalGradient(0f to canvas, 1f to Color.Transparent),
+                ))
+                Box(Modifier.fillMaxWidth().height(176.dp).align(Alignment.BottomCenter).background(
+                    Brush.verticalGradient(0f to Color.Transparent, .48f to canvas.copy(alpha = .55f), 1f to canvas),
+                ))
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 42.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(if (item.url.contains("eroticmv.com")) "MOVIE" else if (item.url.contains("kisskh.do")) "K-DRAMA" else "SHORT DRAMA", style = MaterialTheme.typography.labelMedium,
