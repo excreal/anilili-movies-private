@@ -66,7 +66,7 @@ internal fun CatalogScreen(
                         AppSymbol(AppIcon.Expand, description = if (categories) "Hide source shortcuts" else "Show source shortcuts")
                     }
                 }
-                Text("Find your next story", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Find your next movie or show", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(model.query, model::edit,

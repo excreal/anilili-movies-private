@@ -10,7 +10,13 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KISS18("Kiss18"), NARTO("Narto Drama"), EROTICMV("EroticMV"), KISSKH("KissKH · K-drama") }
+internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KISS18("Kiss18"), NARTO("Narto Drama"), EROTICMV("Erotic Movies"), KISSKH("KissKH · K-drama") }
+
+/** The movie edition shares the player and download engine, while presenting movie/show sources only. */
+internal object MovieCatalogConfig {
+    val sources = listOf(CatalogSource.KISSKH, CatalogSource.EROTICMV)
+    val initialSource = CatalogSource.KISSKH
+}
 
 internal data class CatalogSourceOrder(val order: List<CatalogSource>, val enabled: Set<CatalogSource>)
 
@@ -20,7 +26,7 @@ internal object CatalogSourcePreferences {
     private const val ORDER = "order"
     private const val DISABLED = "disabled"
     private var prefs: android.content.SharedPreferences? = null
-    private val defaults get() = CatalogSourceOrder(CatalogSource.entries, CatalogSource.entries.toSet())
+    private val defaults get() = CatalogSourceOrder(MovieCatalogConfig.sources, MovieCatalogConfig.sources.toSet())
     val state = kotlinx.coroutines.flow.MutableStateFlow(defaults)
 
     @Synchronized fun attach(context: android.content.Context) {
@@ -28,12 +34,12 @@ internal object CatalogSourcePreferences {
         prefs = context.applicationContext.getSharedPreferences(FILE, android.content.Context.MODE_PRIVATE)
         val stored = prefs ?: return
         val order = (stored.getString(ORDER, null)?.split(',').orEmpty().mapNotNull { raw ->
-            CatalogSource.entries.firstOrNull { it.name == raw }
-        } + CatalogSource.entries).distinct()
+            MovieCatalogConfig.sources.firstOrNull { it.name == raw }
+        } + MovieCatalogConfig.sources).distinct()
         val disabled = stored.getStringSet(DISABLED, emptySet()).orEmpty()
-            .mapNotNullTo(mutableSetOf()) { raw -> CatalogSource.entries.firstOrNull { it.name == raw } }
-        val enabled = CatalogSource.entries.filterNotTo(linkedSetOf()) { it in disabled }
-        if (enabled.isEmpty()) enabled += CatalogSource.entries.first()
+            .mapNotNullTo(mutableSetOf()) { raw -> MovieCatalogConfig.sources.firstOrNull { it.name == raw } }
+        val enabled = MovieCatalogConfig.sources.filterNotTo(linkedSetOf()) { it in disabled }
+        if (enabled.isEmpty()) enabled += MovieCatalogConfig.initialSource
         state.value = CatalogSourceOrder(order, enabled)
         persist(state.value)
     }
@@ -62,7 +68,7 @@ internal object CatalogSourcePreferences {
     private fun persist(value: CatalogSourceOrder) {
         prefs?.edit()
             ?.putString(ORDER, value.order.joinToString(",") { it.name })
-            ?.putStringSet(DISABLED, CatalogSource.entries.filterNot { it in value.enabled }.mapTo(mutableSetOf()) { it.name })
+            ?.putStringSet(DISABLED, MovieCatalogConfig.sources.filterNot { it in value.enabled }.mapTo(mutableSetOf()) { it.name })
             ?.apply()
     }
 }
@@ -96,7 +102,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     private val cookies = SiteDownloadCookieStore(application)
     private val sourcePreferences = CatalogSourcePreferences.also { it.attach(application) }
     var availableSources by mutableStateOf(sourcePreferences.state.value.order.filter { it in sourcePreferences.state.value.enabled }); private set
-    var source by mutableStateOf(availableSources.firstOrNull() ?: CatalogSource.DRAMATIP); private set
+    var source by mutableStateOf(availableSources.firstOrNull() ?: MovieCatalogConfig.initialSource); private set
     var query by mutableStateOf(""); private set
     var items by mutableStateOf(emptyList<CatalogItem>()); private set
     var loading by mutableStateOf(false); private set
@@ -148,7 +154,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
             sourcePreferences.state.collect { settings ->
                 availableSources = settings.order.filter { it in settings.enabled }
                 if (source !in settings.enabled) {
-                    val replacement = availableSources.firstOrNull() ?: CatalogSource.DRAMATIP
+                    val replacement = availableSources.firstOrNull() ?: MovieCatalogConfig.initialSource
                     if (source != replacement) {
                         source = replacement; query = ""; activeFilter = null; filterLabel = null; load(false)
                     }
