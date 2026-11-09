@@ -305,8 +305,10 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                 }, onRemove = { removeId = it }) }
                 showHistory -> LibraryScreen(savedShows, continueWatching, images,
                     onDetails = { series -> showHistory = false; siteDownload.updateInput(series.url); siteDownload.inspect(); showLinkDetails = true },
-                    onResume = { series -> remoteEpisode = null; playingRemote = series })
-                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { url -> siteDownload.updateInput(url); siteDownload.inspect(); showLinkDetails = true }, onLink = { siteDownload.updateInput(""); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching, images, onOpen = { series -> remoteEpisode = null; playingRemote = series }) }, backdrop = chromeBackdrop, onDownloads = { model.showDownloads = true })
+                    onResume = { series -> remoteEpisode = null; playingRemote = series },
+                    onRemoveFromContinueWatching = { series -> history.removeFromContinueWatching(series); historyRevision++ },
+                    onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ })
+                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { url -> siteDownload.updateInput(url); siteDownload.inspect(); showLinkDetails = true }, onLink = { siteDownload.updateInput(""); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching, images, onOpen = { series -> remoteEpisode = null; playingRemote = series }, onRemove = { series -> history.removeFromContinueWatching(series); historyRevision++ }, onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ }) }, backdrop = chromeBackdrop, onDownloads = { model.showDownloads = true })
                 else -> screenState.SaveableStateProvider("sites") {
                     SiteDownloadScreen(siteDownload, model, images,
                         onBack = { showLinkDetails = false },

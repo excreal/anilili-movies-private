@@ -43,8 +43,13 @@ class AnimeApplication : Application(), coil.ImageLoaderFactory {
         val lowRam = (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).isLowRamDevice
         val free = runCatching { android.os.StatFs(cacheDir.absolutePath).availableBytes }.getOrDefault(640L * 1024 * 1024)
         val diskBytes = (free / 20).coerceIn(32L * 1024 * 1024, 256L * 1024 * 1024)
+        val imageDispatcher = okhttp3.Dispatcher().apply { maxRequests = 12; maxRequestsPerHost = 5 }
+        val imageClient = client.newBuilder().dispatcher(imageDispatcher).retryOnConnectionFailure(true)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(35, java.util.concurrent.TimeUnit.SECONDS).build()
         return coil.ImageLoader.Builder(this)
-            .okHttpClient(client)
+            .okHttpClient(imageClient)
             .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(if (lowRam) .08 else .12).build() }
             .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(diskBytes).build() }
             .crossfade(150)

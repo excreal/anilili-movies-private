@@ -138,7 +138,7 @@ internal fun SiteDownloadScreen(
                 }
             }
             if (!episodesTab) {
-                val overview = series.description.ifBlank { series.metadata?.description.orEmpty() }
+                val overview = series.overviewText()
                 if (overview.isNotBlank()) item {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).animateContentSize()
                         .clickable { overviewExpanded = !overviewExpanded }) {
@@ -213,13 +213,14 @@ internal fun SiteDownloadScreen(
 private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
     val canvas = MaterialTheme.colorScheme.background
     val backdrop = series.metadata?.images?.firstOrNull { it.role in setOf("banner", "backdrop", "featured_artwork") }?.url ?: series.poster
+    val poster = series.posterThumbnail()
     Box(Modifier.fillMaxWidth().height(286.dp)) {
         AsyncImage(model = backdrop, imageLoader = images, contentDescription = null,
             modifier = Modifier.fillMaxWidth().height(190.dp), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxWidth().height(190.dp).background(Brush.verticalGradient(listOf(Color.Transparent, canvas))))
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Bottom) {
-            Thumbnail(series.poster, series.title, images,
+            Thumbnail(poster, series.title, images,
                 Modifier.width(98.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)))
             Column(Modifier.weight(1f).padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -311,7 +312,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Thumbnail(series.poster, series.title, images, Modifier.size(56.dp, 76.dp), cornerRadius = 6.dp)
+                Thumbnail(series.posterThumbnail(), series.title, images, Modifier.size(56.dp, 76.dp), cornerRadius = 6.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(if (series.isSingleVideo) "DOWNLOAD VIDEO" else "DOWNLOAD EPISODES", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.8.sp), fontWeight = FontWeight.W800, color = MaterialTheme.colorScheme.primary)
                     Text(series.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W800, maxLines = 2, overflow = TextOverflow.Ellipsis)

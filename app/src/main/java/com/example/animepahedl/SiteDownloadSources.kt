@@ -41,6 +41,17 @@ internal data class SiteShowMetadata(val description: String? = null, val altern
 internal data class SiteDownloadSeries(val provider: SiteDownloadProvider, val id: String, val title: String,
     val poster: String, val url: String, val episodes: List<SiteDownloadEpisode>, val qualities: List<String> = listOf("Best"),
     val description: String = "", val metadata: SiteShowMetadata? = null)
+internal fun SiteDownloadSeries.overviewText(): String = metadata?.description?.takeIf(String::isNotBlank) ?: description
+internal fun SiteDownloadSeries.posterThumbnail(): String = if (provider == SiteDownloadProvider.EROTICMV) {
+    metadata?.images?.firstOrNull { it.role in setOf("video-poster", "poster") }?.url?.takeIf(String::isNotBlank) ?: poster
+} else poster
+
+/** A stale provider URL may be refreshed once for each selected episode, never in a retry loop. */
+internal class MediaLinkRefreshGuard {
+    private val refreshed = mutableSetOf<String>()
+    fun shouldRefresh(provider: SiteDownloadProvider, episodeId: String): Boolean =
+        provider != SiteDownloadProvider.DIRECT && refreshed.add("${provider.name}:$episodeId")
+}
 internal fun SiteDownloadSeries.matchesInspection(provider: SiteDownloadProvider, id: String, expectedGeneration: Int, generation: Int): Boolean =
     expectedGeneration == generation && this.provider == provider && this.id == id
 internal fun mergeDiscoveredQualities(current: SiteDownloadSeries, expectedProvider: SiteDownloadProvider, expectedId: String,

@@ -189,6 +189,10 @@ internal fun DramaPlayerSurface(
                 resumeAfterPause = playOnOpen
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (failure: Exception) {
+                if (latestPlaybackFailure?.invoke(page) == true) {
+                    retry++
+                    return@collectLatest
+                }
                 loading = false
                 error = failure.message?.takeIf(String::isNotBlank) ?: "Could not prepare this episode."
             }

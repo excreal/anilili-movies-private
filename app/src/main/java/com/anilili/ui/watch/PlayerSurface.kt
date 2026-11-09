@@ -281,6 +281,8 @@ fun PlayerSurface(
      */
     onStalled: ((String, Long) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** Provider-specific fit policy for unusual aspect ratios; null follows the user's player setting. */
+    contentScaleOverride: PlayerContentScale? = null,
     onToggleFullscreen: (() -> Unit)? = null,
     startPositionMs: Long = 0,
     /** Reports (streamUrl, positionMs, durationMs); the url is the item the player is really on. */
@@ -387,6 +389,7 @@ fun PlayerSurface(
     val holdToSpeedEnabled by SettingsStore.holdToSpeedEnabled.collectAsState()
     val holdPlaybackSpeed by SettingsStore.holdPlaybackSpeed.collectAsState()
     val contentScale by SettingsStore.playerContentScale.collectAsState()
+    val effectiveContentScale = contentScaleOverride ?: contentScale
     val audioOutputFormat by AudioOutputMonitor.current.collectAsState()
     CompiledSeparately {
     PlayerBrightnessOverride(enabled = playerGestures)
@@ -1983,7 +1986,7 @@ fun PlayerSurface(
                     setShowFastForwardButton(true)
                     setShowRewindButton(true)
                     controllerShowTimeoutMs = if (device.isTv) 6_000 else 5_000
-                    resizeMode = playerResizeMode(contentScale)
+                    resizeMode = playerResizeMode(effectiveContentScale)
                     setBackgroundColor(android.graphics.Color.BLACK)
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
@@ -2013,7 +2016,7 @@ fun PlayerSurface(
                 it.player = playerControls
                 it.isFocusable = !device.isTv
                 it.isFocusableInTouchMode = !device.isTv
-                it.resizeMode = playerResizeMode(contentScale)
+                it.resizeMode = playerResizeMode(effectiveContentScale)
                 it.applyContentAspectRatio(contentAspectRatio)
                 if (device.isTv) it.clearFocus()
                 val controlsVisible = if (device.isTv) tvControlsVisible else phoneControlsVisible
@@ -2342,7 +2345,7 @@ fun PlayerSurface(
                 },
                 audioOptions = audioOptions,
                 audioFormat = audioOutputFormat?.label,
-                contentScale = contentScale,
+                contentScale = contentScale.takeIf { contentScaleOverride == null },
                 onContentScaleChange = { scale ->
                     SettingsStore.setPlayerContentScale(scale)
                 },

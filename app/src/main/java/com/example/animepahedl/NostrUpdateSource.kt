@@ -40,6 +40,9 @@ object NostrUpdateSource {
     private const val SUBSCRIPTION_ID = "video-downloader-update"
     private val PER_RELAY_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10)
     private val OVERALL_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(15)
+    internal const val MAX_RELAY_FRAME_BYTES = 512 * 1024
+    internal const val MAX_EVENTS_PER_RELAY = 16
+    internal const val MAX_FRAMES_PER_RELAY = 64
 
     /**
      * The same signed event, served as a file from the APK mirror.
@@ -109,6 +112,7 @@ object NostrUpdateSource {
             )
         }
         val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val gate = RelayFrameGate(subscriptionId, json)
         val done = CountDownLatch(1)
         val webSocket = client.newWebSocket(
             Request.Builder().url(relay).build(),
@@ -118,16 +122,28 @@ object NostrUpdateSource {
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    runCatching {
-                        val message = json.parseToJsonElement(text).jsonArray
-                        when (message[0].jsonPrimitive.content) {
-                            "EVENT" -> sink.add(message[2].jsonObject)
-                            "EOSE" -> {
-                                answered.set(true)
-                                webSocket.close(1000, null)
-                                done.countDown()
-                            }
+                    // Check frame size before UTF-8 conversion and JSON parsing. OkHttp has
+                    // already assembled the text frame, but this prevents our parser from
+                    // allocating a second unbounded JSON tree from relay-controlled data.
+                    val decision = gate.accept(text)
+                    when (val frame = decision.frame) {
+                        is RelayFrame.Event -> {
+                            sink.add(frame.event)
                         }
+                        RelayFrame.EndOfStoredEvents -> {
+                            answered.set(true)
+                        }
+                        null -> Unit
+                    }
+                    if (decision.shouldClose) {
+                        // We have enough bounded candidates or received a terminal/invalid limit.
+                        // Stop before any subsequent relay frame can be parsed or queued.
+                        if (decision.frame is RelayFrame.Event) answered.set(true)
+                        webSocket.close(
+                            if (decision.frame == null) 1009 else 1000,
+                            if (decision.frame == null) "Relay response limit exceeded" else null,
+                        )
+                        done.countDown()
                     }
                 }
 
@@ -145,6 +161,62 @@ object NostrUpdateSource {
         runCatching { webSocket.close(1000, null) }
         return answered.get()
     }
+}
+
+/** Only the two NIP-01 response messages for this exact subscription are actionable. */
+internal sealed interface RelayFrame {
+    data class Event(val event: JsonObject) : RelayFrame
+    data object EndOfStoredEvents : RelayFrame
+}
+
+internal data class RelayFrameDecision(val frame: RelayFrame?, val shouldClose: Boolean)
+
+/** Bounds untrusted frames, parsing work and retained event count for one relay connection. */
+internal class RelayFrameGate(
+    private val subscriptionId: String,
+    private val json: Json,
+    private val maxFrames: Int = NostrUpdateSource.MAX_FRAMES_PER_RELAY,
+    private val maxEvents: Int = NostrUpdateSource.MAX_EVENTS_PER_RELAY,
+) {
+    private var frameCount = 0
+    private var eventCount = 0
+    private var closed = false
+
+    fun accept(text: String): RelayFrameDecision {
+        if (closed) return RelayFrameDecision(null, true)
+        frameCount++
+        if (frameCount > maxFrames || text.length > NostrUpdateSource.MAX_RELAY_FRAME_BYTES ||
+            text.toByteArray(Charsets.UTF_8).size > NostrUpdateSource.MAX_RELAY_FRAME_BYTES
+        ) {
+            closed = true
+            return RelayFrameDecision(null, true)
+        }
+        val frame = decodeRelayFrame(text, subscriptionId, json)
+        if (frame is RelayFrame.Event) {
+            eventCount++
+            if (eventCount >= maxEvents) closed = true
+            return RelayFrameDecision(frame, closed)
+        }
+        if (frame == RelayFrame.EndOfStoredEvents) closed = true
+        return RelayFrameDecision(frame, closed)
+    }
+}
+
+internal fun decodeRelayFrame(text: String, subscriptionId: String, json: Json): RelayFrame? {
+    if (text.length > NostrUpdateSource.MAX_RELAY_FRAME_BYTES ||
+        text.toByteArray(Charsets.UTF_8).size > NostrUpdateSource.MAX_RELAY_FRAME_BYTES
+    ) return null
+    return runCatching {
+        val message = json.parseToJsonElement(text).jsonArray
+        when {
+            message.size == 3 && message[0].jsonPrimitive.content == "EVENT" &&
+                message[1].jsonPrimitive.content == subscriptionId ->
+                RelayFrame.Event(message[2].jsonObject)
+            message.size == 2 && message[0].jsonPrimitive.content == "EOSE" &&
+                message[1].jsonPrimitive.content == subscriptionId -> RelayFrame.EndOfStoredEvents
+            else -> null
+        }
+    }.getOrNull()
 }
 
 internal data class NostrEvent(

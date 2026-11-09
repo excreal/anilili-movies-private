@@ -37,7 +37,7 @@ internal suspend fun adoptExistingVideo(context: Context, identity: DownloadIden
         Exports.put(context, id, ExportRecord(title, tree, AppSettings(context).outputFolder,
             uri = video.uri.toString(), bytes = video.bytes, thumbnail = identity.anime.poster,
             audio = identity.audio, quality = identity.quality, showTitle = identity.anime.title,
-            episodeNumber = identity.episode.number, identity = identity, media = old?.media))
+            episodeNumber = identity.episode.number, identity = identity, pendingUri = old?.pendingUri, media = old?.media))
         DownloadStore.flush()
         adopted = true
     }

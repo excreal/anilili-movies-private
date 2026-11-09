@@ -87,6 +87,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
     var loaded by remember { mutableStateOf<ReferenceResolved?>(null) }
     var failure by remember { mutableStateOf<AnililiFailure?>(null) }
     val onlineOnly = remember(series.id) { mutableSetOf<String>() }
+    val refreshedLinks = remember(series.provider, series.id) { MediaLinkRefreshGuard() }
     val seriesKey = "series:${series.provider}:${series.id}"
     val current = series.episodes.getOrNull(index) ?: return
     val colors = remember { appColors(ThemeSpec(), wallpaperSeed(context)) }
@@ -194,7 +195,11 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
             if (result.local) fullscreen = true
             loaded = result
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { failure = error.toFailure(AnililiError.SOURCE_RESOLVE_FAILED) }
+        catch (error: Exception) {
+            if (!localOnlySeries && refreshedLinks.shouldRefresh(series.provider, current.id)) {
+                attempt++
+            } else failure = error.toFailure(AnililiError.SOURCE_RESOLVE_FAILED)
+        }
     }
     val result = loaded?.takeIf { it.episode.id == current.id }
     LaunchedEffect(current.id, attempt, result?.episode?.id) {
@@ -231,7 +236,11 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         if (position > 0) persist(url, position, history.duration(current.url))
         ReferencePlaybackRegistry.capture()
         PlaybackService.stopActivePlayback()
-        if (result?.local == true && !localOnlySeries && onlineOnly.add(current.id)) attempt++ else failure = error
+        when {
+            result?.local == true && !localOnlySeries && onlineOnly.add(current.id) -> attempt++
+            !localOnlySeries && refreshedLinks.shouldRefresh(series.provider, current.id) -> { failure = null; attempt++ }
+            else -> failure = error
+        }
     }
     val snapshots = remember(historyRevision, series) { series.episodes.associate { episode ->
         episode.displayNumber to EpisodeResume(history.position(episode.url), history.duration(episode.url))
@@ -268,6 +277,8 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                                 episodeTitle = if (series.isSingleVideo) series.title else "Episode ${current.displayNumber}",
                                 pauseDescription = series.description, artworkUrl = series.poster, animeId = registryId,
                                 provider = series.provider.name, category = "sub", episode = current.displayNumber,
+                                contentScaleOverride = if (series.provider == SiteDownloadProvider.KISSKH)
+                                    com.anilili.data.settings.PlayerContentScale.FIT else null,
                                 autoAdvanced = autoAdvanced,
                                 onEnded = { result.streams.firstOrNull()?.let { persist(it.url, history.duration(current.url), history.duration(current.url), true) } },
                                 onNextEpisode = { select(index + 1) }, onPreviousEpisode = { select(index - 1) },

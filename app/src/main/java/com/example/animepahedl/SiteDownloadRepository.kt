@@ -164,7 +164,11 @@ internal class SiteDownloadRepository(
     private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024, allowChallenge: Boolean = false): Page {
         require('\r' !in cookie && '\n' !in cookie) { "Invalid Cookie header." }
         // Re-evaluate imported cookies per request; explicit headers stay on their original origin.
-        val scoped = client.newBuilder().cookieJar(providerSession).addNetworkInterceptor { chain ->
+        // Provider pages carry session context, so never let an HTTPS page redirect downgrade
+        // that request (or imported cookies) to cleartext. Direct HTTP media bypasses fetch and
+        // remains supported by the DIRECT path.
+        if (url.scheme != "https") throw IOException("Provider pages must use HTTPS.")
+        val scoped = client.newBuilder().followSslRedirects(false).cookieJar(providerSession).addNetworkInterceptor { chain ->
             val builder = chain.request().newBuilder()
             val target = chain.request().url
             if (cookieHeader != null) {

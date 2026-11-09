@@ -93,6 +93,28 @@ class SiteDownloadSourcesTest {
         assertEquals("application/x-mpegURL", chooseDramaVariant(parseNartoVariants(html, base, 1), "Best").mimeType)
         assertTrue(runCatching { parseNartoVariants(html, base, 3) }.isFailure)
     }
+    @Test fun nartoAcceptsOpaqueSignedStreamWithAdvertisedHlsMode() {
+        val body = "const episodeItemsRaw = " + javaClass.getResource("/narto/episode-actual-shape.json")!!.readText().trim() + ";"
+        val base = "https://narto-drama.com/detail/watch/story/1".toHttpUrl()
+        val media = parseNartoVariants(body, base, 1).single()
+        assertEquals("https://stream.narto-drama.com/e/m/SANITIZED_SIGNED_STREAM?mh=1", media.url)
+        assertEquals("application/x-mpegURL", media.mimeType)
+    }
+    @Test fun metadataOverviewAndEroticMvPosterUseTheDetailedArtwork() {
+        val series = SiteDownloadSeries(SiteDownloadProvider.EROTICMV, "m", "Movie", "banner.jpg", "https://eroticmv.com/m/",
+            emptyList(), description = "Short OG text", metadata = SiteShowMetadata(description = "Full synopsis",
+                images = listOf(SiteShowImage("poster.jpg", "video-poster"))))
+        assertEquals("Full synopsis", series.overviewText())
+        assertEquals("poster.jpg", series.posterThumbnail())
+        assertEquals("banner.jpg", series.copy(provider = SiteDownloadProvider.NARTO).posterThumbnail())
+    }
+    @Test fun linkRefreshIsBoundedPerEpisodeAndDoesNotRetryDirectUrls() {
+        val guard = MediaLinkRefreshGuard()
+        assertTrue(guard.shouldRefresh(SiteDownloadProvider.NARTO, "episode-1"))
+        assertFalse(guard.shouldRefresh(SiteDownloadProvider.NARTO, "episode-1"))
+        assertTrue(guard.shouldRefresh(SiteDownloadProvider.NARTO, "episode-2"))
+        assertFalse(guard.shouldRefresh(SiteDownloadProvider.DIRECT, "file-1"))
+    }
     @Test fun encodedMediaAndHtmlEntities() {
         val raw = "https://cdn.test/video.m3u8?x=1&y=2"
         assertEquals(raw, decodeEroticMedia("http://${Base64.getEncoder().encodeToString(raw.toByteArray())}.m3u8"))

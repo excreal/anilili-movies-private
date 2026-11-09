@@ -6,6 +6,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.ResponseBody
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 /**
  * A message the project can push to every install without shipping a build.
@@ -33,6 +36,8 @@ object AnnouncementSource {
     /** The same signed event served as a file, so the common case is one request, not a relay scan. */
     const val MIRROR_URL =
         "http://20.120.96.17/notices/announcement.json"
+
+    internal const val MAX_MIRROR_BYTES = 256 * 1024
 
     /**
      * The newest valid announcement, or null when there is nothing to say.
@@ -64,7 +69,7 @@ object AnnouncementSource {
         val body = client.newCall(request).execute().use { response ->
             // A 404 is "nothing published", which is the resting state of this channel, not a fault.
             if (!response.isSuccessful) return@runCatching null
-            response.body?.string().orEmpty()
+            response.body?.let(::readBoundedAnnouncementBody).orEmpty()
         }
         val event = json.parseToJsonElement(body).jsonObject.toNostrEvent()
         if (!event.isValidSignedBy(
@@ -80,6 +85,31 @@ object AnnouncementSource {
     }.getOrNull()
 
 
+}
+
+/** Read at most [MAX_MIRROR_BYTES] from an untrusted mirror before parsing or signature checks. */
+internal fun readBoundedAnnouncementBody(
+    body: ResponseBody,
+    maxBytes: Int = AnnouncementSource.MAX_MIRROR_BYTES,
+): String {
+    require(maxBytes > 0)
+    val declaredLength = body.contentLength()
+    if (declaredLength > maxBytes) throw IOException("Announcement mirror response is too large")
+
+    val output = ByteArrayOutputStream(minOf(maxBytes, declaredLength.takeIf { it >= 0 }?.toInt() ?: 8192))
+    body.byteStream().use { input ->
+        val buffer = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val remaining = maxBytes - total
+            val read = input.read(buffer, 0, minOf(buffer.size, remaining + 1))
+            if (read < 0) break
+            if (read > remaining) throw IOException("Announcement mirror response is too large")
+            output.write(buffer, 0, read)
+            total += read
+        }
+    }
+    return output.toByteArray().toString(Charsets.UTF_8)
 }
 
 /**

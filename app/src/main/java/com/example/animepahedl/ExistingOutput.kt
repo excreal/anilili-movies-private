@@ -11,6 +11,20 @@ import java.util.Locale
 internal class OutputFolderAccessRequired : IOException("Choose the downloads folder so existing videos can be checked.")
 internal data class ExistingVideo(val uri: Uri, val bytes: Long)
 
+/** Avoid adopting empty/tiny/truncated files when a provider output happens to reuse the name. */
+internal fun isPlausibleExistingVideo(bytes: Long, header: ByteArray): Boolean {
+    if (bytes < 1024L || header.isEmpty()) return false
+    val sample = header.take(16).toByteArray()
+    val mp4 = sample.size >= 8 && sample[4] == 'f'.code.toByte() && sample[5] == 't'.code.toByte() &&
+        sample[6] == 'y'.code.toByte() && sample[7] == 'p'.code.toByte()
+    val webm = sample.size >= 4 && sample[0] == 0x1a.toByte() && sample[1] == 0x45.toByte() &&
+        sample[2] == 0xdf.toByte() && sample[3] == 0xa3.toByte()
+    // Some valid MP4s use a large `free` box before ftyp; accept recognizable ISO BMFF boxes.
+    val bmff = sample.size >= 8 && (sample[4] == 'm'.code.toByte() && sample[5] == 'o'.code.toByte() &&
+        sample[6] == 'o'.code.toByte() && sample[7] == 'v'.code.toByte() || mp4)
+    return bmff || webm
+}
+
 internal fun hasOutputFolderAccess(context: Context, tree: String = AppSettings(context).outputTree): Boolean =
     tree.isNotBlank() && context.contentResolver.persistedUriPermissions.any {
         it.uri.toString() == tree && it.isReadPermission && it.isWritePermission
@@ -64,7 +78,12 @@ internal class ExistingOutputIndex(private val context: Context, private val tre
                 resolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                     val observedSize = descriptor.statSize
                     val size = if (observedSize >= 0) observedSize else match.bytes
-                    if (size != 0L) return ExistingVideo(uri, size.coerceAtLeast(0))
+                    if (size >= 1024L) {
+                        resolver.openInputStream(uri)?.use { stream ->
+                            val header = stream.readNBytes(16)
+                            if (isPlausibleExistingVideo(size, header)) return ExistingVideo(uri, size)
+                        }
+                    }
                 }
             } catch (_: java.io.FileNotFoundException) { /* Deleted since the listing; do not adopt it. */
             } catch (_: SecurityException) { throw OutputFolderAccessRequired() }

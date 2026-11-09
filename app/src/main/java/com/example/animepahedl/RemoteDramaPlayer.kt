@@ -24,6 +24,11 @@ internal fun RemoteDramaPlayer(series: SiteDownloadSeries, quality: String, onCl
     }
     LaunchedEffect(Unit) { com.anilili.playback.PlaybackService.stopActivePlayback() }
     val app = LocalContext.current.applicationContext
+    val playbackHistory = remember(app) { PlaybackHistory(app) }
+    // Register the online series before the surface starts resolving episodes. Progress writes
+    // alone cannot populate Continue Watching because recent() intentionally reads registered
+    // metadata records only.
+    LaunchedEffect(series.provider, series.id) { playbackHistory.register(series) }
     val savedShows = remember(app) { SavedShowsStore(app) }
     val savedRevision by SavedShowsStore.changes.collectAsState()
     val isSaved = remember(savedRevision, series) { savedShows.contains(series) }
@@ -32,6 +37,7 @@ internal fun RemoteDramaPlayer(series: SiteDownloadSeries, quality: String, onCl
     // A failed local copy is bypassed only for this playback session.
     val onlineOnly = remember(series.provider, series.id) { mutableSetOf<Int>() }
     val localPlaying = remember(series.provider, series.id) { mutableSetOf<Int>() }
+    val refreshedLinks = remember(series.provider, series.id) { MediaLinkRefreshGuard() }
     val episodes = remember(series) { series.episodes.map {
         DramaPlayerEpisode(it.id, it.url, if (series.isSingleVideo) series.title else "Episode ${it.displayNumber}")
     } }
@@ -39,7 +45,11 @@ internal fun RemoteDramaPlayer(series: SiteDownloadSeries, quality: String, onCl
         DramaPlayerSurface(series.title, "series:${series.provider.name}:${series.id}", episodes, startEpisodeId, onClose,
             saved = isSaved, onToggleSave = { savedShows.toggle(series) },
             onPlaybackFailure = { index ->
-                if (localPlaying.remove(index)) { onlineOnly.add(index); true } else false
+                when {
+                    localPlaying.remove(index) -> { onlineOnly.add(index); true }
+                    refreshedLinks.shouldRefresh(series.provider, series.episodes.getOrNull(index)?.id.orEmpty()) -> true
+                    else -> false
+                }
             },
             resolve = { index ->
                 val episode = series.episodes[index]
