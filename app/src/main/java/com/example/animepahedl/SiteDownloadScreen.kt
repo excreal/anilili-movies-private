@@ -28,16 +28,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
@@ -58,7 +54,6 @@ internal fun SiteDownloadScreen(
     onToggleSave: () -> Unit = {},
     onExploreMetadata: (String, SiteShowTerm) -> Unit = { _, _ -> },
 ) {
-    val keyboard = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
     var historyRevision by remember { mutableIntStateOf(0) }
     DisposableEffect(context) {
@@ -68,26 +63,11 @@ internal fun SiteDownloadScreen(
         onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val history = remember(context, historyRevision) { PlaybackHistory(context) }
-    var cookiesOpen by rememberSaveable { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var episodesTab by remember(model.series?.id) { mutableStateOf(false) }
     var overviewExpanded by remember(model.series?.id) { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 108.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if ((!model.inspecting && model.series == null)) item(contentType = "link-entry") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Open a video link", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(model.input, model::updateInput, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
-                    label = { Text("Video or series URL") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { keyboard?.hide(); model.inspect() }))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { keyboard?.hide(); model.inspect() }, enabled = model.input.isNotBlank() && !model.inspecting) { Text("Open") }
-                    TextButton(onClick = { cookiesOpen = true }) { Text("Browser cookies") }
-                    if (model.inspecting) TextButton(onClick = model::cancelInspect) { Text("Cancel") }
-                }
-            }
-        }
         if (model.inspecting) item(contentType = "loading") { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { WaterFillLogoIndicator(size = 72.dp) } }
         model.notice?.let { notice -> item(contentType = "notice") {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -105,15 +85,15 @@ internal fun SiteDownloadScreen(
             item(contentType = "primary-actions") {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
-                        enabled = model.ready && !model.preparing && !model.discarding && model.pending == null) {
-                        AppSymbol(AppIcon.Download, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Download")
+                        enabled = series.contentAvailable && model.ready && !model.discarding) {
+                        AppSymbol(AppIcon.Download, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (series.contentAvailable) "Download" else "Unavailable")
                     }
-                    Button(onClick = onWatch, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp)) {
-                        AppSymbol(AppIcon.Play, Modifier.size(19.dp)); Spacer(Modifier.width(6.dp)); Text(if (history.canResume(series)) "Resume" else "Play")
+                    Button(onClick = onWatch, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp), enabled = series.contentAvailable) {
+                        AppSymbol(AppIcon.Play, Modifier.size(19.dp)); Spacer(Modifier.width(6.dp)); Text(if (!series.contentAvailable) "Unavailable" else if (history.canResume(series)) "Resume" else "Play")
                     }
                 }
             }
-            item(contentType = "playback-summary") {
+            if (series.contentAvailable) item(contentType = "playback-summary") {
                 val summary = rememberSeriesPlaybackSummary(series)
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     summary.resumeLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -125,7 +105,7 @@ internal fun SiteDownloadScreen(
             if (!series.isSingleVideo) stickyHeader(contentType = "episode-tabs") {
                 Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
                     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(false to "Overview", true to "Episodes").filterNot { it.first && series.isSingleVideo }.forEach { (value, label) ->
+                        listOf(false to "Overview", true to "Episodes").filterNot { it.first && (series.isSingleVideo || !series.contentAvailable) }.forEach { (value, label) ->
                             val active = episodesTab == value
                             Text(label, style = MaterialTheme.typography.labelLarge,
                                 color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -139,11 +119,11 @@ internal fun SiteDownloadScreen(
             }
             if (!episodesTab) {
                 val overview = series.overviewText()
-                if (overview.isNotBlank()) item {
+                if (overview.isNotBlank() || !series.contentAvailable) item {
                     var overviewOverflows by remember(series.id, overview) { mutableStateOf(false) }
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).animateContentSize()) {
                         Text("Overview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(overview, Modifier.padding(top = 7.dp), style = MaterialTheme.typography.bodyMedium,
+                        Text(overview.ifBlank { "Content is not available from KissKH in your region." }, Modifier.padding(top = 7.dp), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (overviewExpanded) Int.MAX_VALUE else 4,
                             overflow = TextOverflow.Ellipsis, onTextLayout = { overviewOverflows = it.hasVisualOverflow })
                         if (overviewOverflows || overviewExpanded) {
@@ -159,7 +139,7 @@ internal fun SiteDownloadScreen(
                 item(contentType = "episode-heading") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${series.episodes.size} ${if (series.episodes.size == 1) "episode" else "episodes"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = { confirm = true }, enabled = model.ready && !model.preparing && model.pending == null) { Text("Download episodes") }
+                        TextButton(onClick = { confirm = true }, enabled = model.ready && !model.discarding) { Text("Download episodes") }
                     }
                 }
                 items(series.episodes, key = { it.id }, contentType = { "episode-row" }) { episode ->
@@ -206,7 +186,6 @@ internal fun SiteDownloadScreen(
         }
     }
     }
-    if (cookiesOpen) SiteDownloadCookiesDialog(model, onClose = { cookiesOpen = false })
     if (confirm) model.series?.let { series ->
         RemoteDownloadSheet(series, model, downloads, images, onDismiss = { confirm = false }, onConfirm = {
             confirm = false
@@ -222,12 +201,19 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
         ?: series.posterThumbnail()
     val poster = series.posterThumbnail()
     val bannerArtwork = series.provider == SiteDownloadProvider.KISSKH
+    val imageContext = LocalContext.current
+    val posterRequest = remember(imageContext, series.url, poster, bannerArtwork) {
+        if (bannerArtwork) catalogArtworkRequest(imageContext, CatalogItem(series.title, series.url, poster, wideArtwork = true)) else null
+    }
+    val backdropRequest = remember(imageContext, series.url, backdrop, bannerArtwork) {
+        if (bannerArtwork) catalogArtworkRequest(imageContext, CatalogItem(series.title, series.url, kisskhArtworkUrl(backdrop), wideArtwork = true)) else null
+    }
     // Match Anilili's detail hero: carry the artwork behind the status bar and toolbar, then
     // continue it 190dp below the chrome before the cover/title row closes the header.
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
     val backdropHeight = topInset + 190.dp
     Box(Modifier.fillMaxWidth().height(topInset + 286.dp)) {
-        AsyncImage(model = backdrop, imageLoader = images, contentDescription = null,
+        AsyncImage(model = backdropRequest ?: backdrop, imageLoader = images, contentDescription = null,
             modifier = Modifier.fillMaxWidth().height(backdropHeight), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxWidth().height(backdropHeight)
             .background(Brush.verticalGradient(listOf(Color.Transparent, canvas))))
@@ -236,7 +222,7 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
             Thumbnail(poster, series.title, images,
                 Modifier.width(if (bannerArtwork) 140.dp else 116.dp)
                     .aspectRatio(if (bannerArtwork) 16f / 9f else 2f / 3f).clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)), imageRequest = posterRequest)
             Column(Modifier.weight(1f).padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.fillMaxWidth().heightIn(min = 60.dp), contentAlignment = Alignment.BottomStart) {
                     Text(series.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -245,7 +231,7 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
                     modifier = Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.primary.copy(alpha = .16f))
                         .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .55f), RoundedCornerShape(50))
                         .padding(horizontal = 10.dp, vertical = 4.dp))
-                Text(if (series.isSingleVideo) "Full video" else "${series.episodes.size} episodes", style = MaterialTheme.typography.bodyMedium,
+                Text(when { !series.contentAvailable -> "Content unavailable"; series.isSingleVideo -> "Full video"; else -> "${series.episodes.size} episodes" }, style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary)
             }
         }
@@ -345,7 +331,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                             val active = model.quality == quality
                             Box(Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(12.dp))
                                 .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else Color.Transparent)
-                                .selectable(selected = active, enabled = !model.preparing, role = Role.Tab, onClick = { model.chooseQuality(quality) }),
+                                .selectable(selected = active, enabled = !model.discarding, role = Role.Tab, onClick = { model.chooseQuality(quality) }),
                                 contentAlignment = Alignment.Center) {
                                 Text(quality, style = MaterialTheme.typography.bodyMedium, fontWeight = if (active) FontWeight.W700 else FontWeight.W600,
                                     color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -399,7 +385,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                 DestinationSummary(outputLabel(downloads))
                 Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(8.dp),
                     enabled = model.ready && model.selectionError == null && selected.isNotEmpty() && !downloads.checkingExistingFiles &&
-                        model.pending == null && !model.preparing && !model.discarding) {
+                        !model.discarding) {
                     Text((if (series.isSingleVideo) "Download video" else "Download ${selected.size} episode${if (selected.size == 1) "" else "s"}").uppercase(),
                         style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 1.sp), fontWeight = FontWeight.W800)
                 }

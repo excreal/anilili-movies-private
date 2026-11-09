@@ -248,7 +248,7 @@ internal class KisskhMetadataApi(cookieHeader: ((String) -> String)? = null) : S
         }
         val date = row.kString("releaseDate").ifBlank { null }
         return MetadataRecord(id, url, title, description = row.kString("description").ifBlank { null },
-            images = row.kString("thumbnail").takeIf(String::isNotBlank)?.let { listOf(MetadataImage(it, "thumbnail")) }.orEmpty(),
+            images = row.kString("thumbnail").takeIf(String::isNotBlank)?.let { listOf(MetadataImage(kisskhArtworkUrl(it), "thumbnail")) }.orEmpty(),
             countries = row.kString("country").takeIf(String::isNotBlank)?.let(::listOf).orEmpty(),
             status = row.kString("status").ifBlank { null }, format = row.kString("type").ifBlank { null },
             year = date?.take(4)?.toIntOrNull(), episodeCount = row.kString("episodesCount").toIntOrNull(), releaseDate = date,

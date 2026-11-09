@@ -91,11 +91,14 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                     val playlist = count == 7 && String(first, Charsets.UTF_8) == "#EXTM3U"
                     val data = if (playlist) {
                         val bytes = peek.readBytesBounded(1024 * 1024)
-                        val base = URI(uri)
+                        // Relative HLS resources are based on the final manifest URL after any
+                        // CDN redirect, not necessarily the KissKH/API URL requested initially.
+                        val base = URI(dataSource.uri?.toString() ?: uri)
                         fun rewrite(value: String) = url(base.resolve(value).toString())
                         val original = String(bytes, Charsets.UTF_8)
                         val selected = if (uri == masterUri) selectCachedHlsVariant(original, quality) else original
-                        selected.lineSequence().joinToString("\n") { line ->
+                        val normalized = normalizeCachedByteRanges(selected, base)
+                        normalized.lineSequence().joinToString("\n") { line ->
                             if (line.startsWith("#")) Regex("URI=\"([^\"]+)\"").replace(line) { "URI=\"${rewrite(it.groupValues[1])}\"" }
                             else if (line.isNotBlank()) rewrite(line.trim()) else line
                         }.toByteArray(Charsets.UTF_8)
@@ -135,6 +138,27 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
     }
 }
 
+/** Clip impossible HLS byte ranges to the bytes the origin actually returned and cached. */
+private fun normalizeCachedByteRanges(playlist: String, base: URI): String {
+    val lines = playlist.lines().toMutableList()
+    val nextOffset = mutableMapOf<String, Long>()
+    val byteRange = Regex("^#EXT-X-BYTERANGE:(\\d+)(?:@(\\d+))?$")
+    for (index in lines.indices) {
+        val match = byteRange.matchEntire(lines[index].trim()) ?: continue
+        val length = match.groupValues[1].toLongOrNull() ?: continue
+        val uriIndex = (index + 1 until lines.size).firstOrNull { lines[it].isNotBlank() && !lines[it].trimStart().startsWith("#") } ?: continue
+        val resource = runCatching { base.resolve(lines[uriIndex].trim()).toString() }.getOrNull() ?: continue
+        val offset = match.groupValues[2].toLongOrNull() ?: nextOffset[resource] ?: 0L
+        val total = androidx.media3.datasource.cache.ContentMetadata.getContentLength(
+            OfflineDownloads.cache.getContentMetadata(resource))
+        val available = if (total > 0 && offset < total) total - offset else length
+        val actual = minOf(length, available)
+        if (actual in 1 until length) lines[index] = "#EXT-X-BYTERANGE:$actual@$offset"
+        nextOffset[resource] = offset + actual
+    }
+    return lines.joinToString("\n")
+}
+
 private fun java.io.InputStream.readBytesBounded(limit: Int): ByteArray {
     val result = java.io.ByteArrayOutputStream()
     val buffer = ByteArray(16384)
@@ -163,13 +187,27 @@ internal fun requireCachedHlsSegments(context: Context, id: String): Long {
         ?: error("Temporary download is unavailable")
     val cache = OfflineDownloads.cache
     val factory = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(null)
-    fun playlist(uri: Uri) = DataSourceInputStream(factory.createDataSource(), DataSpec.Builder().setUri(uri).build()).use {
-        androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser().parse(uri, it)
+    fun playlist(uri: Uri): androidx.media3.exoplayer.hls.playlist.HlsPlaylist {
+        val source = factory.createDataSource()
+        return DataSourceInputStream(source, DataSpec.Builder().setUri(uri).build()).use {
+            // HlsPlaylistParser uses this URI as the base for relative segments. Preserve the
+            // CDN destination when the source redirected the manifest request.
+            androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser().parse(source.uri ?: uri, it)
+        }
     }
     fun resource(base: String, path: String, offset: Long = 0, length: Long = androidx.media3.common.C.LENGTH_UNSET.toLong()) {
         val key = androidx.media3.common.util.UriUtil.resolve(base, path)
-        val size = if (length != androidx.media3.common.C.LENGTH_UNSET.toLong()) length else
-            androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key)) - offset
+        val cachedResourceLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        val remainingResourceLength = cachedResourceLength - offset
+        // Some KissKH HLS manifests overstate the final EXT-X-BYTERANGE length. Their
+        // server returns a valid 206 response clipped at EOF, so validate the bytes that
+        // exist in the cached resource instead of rejecting the whole episode for the
+        // manifest's impossible tail length.
+        val size = when {
+            length == androidx.media3.common.C.LENGTH_UNSET.toLong() -> remainingResourceLength
+            cachedResourceLength > 0 && offset < cachedResourceLength -> minOf(length, remainingResourceLength)
+            else -> length
+        }
         require(size > 0 && cache.isCached(key, offset, size)) {
             "Source segment is missing or incomplete; cached media retained. Retry download."
         }

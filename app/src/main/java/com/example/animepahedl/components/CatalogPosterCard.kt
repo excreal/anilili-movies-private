@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import com.example.animepahedl.CatalogItem
+import com.example.animepahedl.kisskhArtworkUrl
 import com.example.animepahedl.ArtworkRecovery
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
@@ -43,7 +44,11 @@ internal fun CatalogPosterCard(
     metadata: String? = null,
 ) {
     val context = LocalContext.current
-    var poster by remember(item.poster) { mutableStateOf(ArtworkRecovery.cached(context, item.url, item.poster)) }
+    val sourcePoster = remember(item.poster, item.url) {
+        val detail = item.url.toHttpUrlOrNull()
+        if (detail?.host in setOf("kisskh.do", "www.kisskh.do")) kisskhArtworkUrl(item.poster) else item.poster
+    }
+    var poster by remember(item.poster, item.url) { mutableStateOf(ArtworkRecovery.cached(context, item.url, sourcePoster)) }
     var attempted by remember(item.poster) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val request = remember(context, poster, item.url) { catalogArtworkRequest(context, item.copy(poster = poster)) }
@@ -93,15 +98,16 @@ internal fun CatalogPosterCard(
 
 internal fun catalogArtworkRequest(context: android.content.Context, item: CatalogItem): ImageRequest =
     ImageRequest.Builder(context).data(item.poster)
-            .memoryCacheKey("poster-v3:" + item.poster).diskCacheKey("poster-v3:" + item.poster)
-            .placeholderMemoryCacheKey("poster-v3:" + item.poster).crossfade(150)
+            .memoryCacheKey("poster-v5:" + item.poster).diskCacheKey("poster-v5:" + item.poster)
+            .placeholderMemoryCacheKey("poster-v5:" + item.poster).crossfade(150)
             .apply {
                 val detail = item.url.toHttpUrlOrNull()
                 val poster = item.poster.toHttpUrlOrNull()
                 // Dramatip explicitly marks CDN artwork no-referrer. Other sources receive
                 // only their own origin, never the old AnimePahe referral or private URL query.
                 if (detail != null && poster != null && detail.host != "dramatip.net" &&
-                    (poster.host == detail.host || detail.host == "eroticmv.com" || detail.host == "www.eroticmv.com")) {
+                    (poster.host == detail.host || detail.host == "eroticmv.com" || detail.host == "www.eroticmv.com" ||
+                        detail.host == "kisskh.do" || detail.host == "www.kisskh.do")) {
                     addHeader("Referer", detail.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())
                 }
             }.build()

@@ -307,7 +307,7 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                     onResume = { series -> remoteEpisode = null; playingRemote = series },
                     onRemoveFromContinueWatching = { series -> history.removeFromContinueWatching(series); historyRevision++ },
                     onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ })
-                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { item -> siteDownload.updateInput(item.url); siteDownload.inspect(item.poster); showLinkDetails = true }, onLink = { siteDownload.updateInput(""); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching.filter { series ->
+                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { item -> siteDownload.updateInput(item.url); siteDownload.inspect(item.poster, item.title); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching.filter { series ->
                     when (catalog.source) {
                         CatalogSource.KISSKH -> series.provider == SiteDownloadProvider.KISSKH
                         CatalogSource.EROTICMV -> series.provider == SiteDownloadProvider.EROTICMV

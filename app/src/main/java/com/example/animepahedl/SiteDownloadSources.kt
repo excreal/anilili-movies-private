@@ -38,12 +38,15 @@ internal data class SiteShowMetadata(val description: String? = null, val altern
     val episodes: List<SiteEpisodeMetadata> = emptyList())
 internal data class SiteDownloadSeries(val provider: SiteDownloadProvider, val id: String, val title: String,
     val poster: String, val url: String, val episodes: List<SiteDownloadEpisode>, val qualities: List<String> = listOf("Best"),
-    val description: String = "", val metadata: SiteShowMetadata? = null, val posterThumbnailOverride: String? = null)
+    val description: String = "", val metadata: SiteShowMetadata? = null, val posterThumbnailOverride: String? = null,
+    val contentAvailable: Boolean = true)
 internal fun SiteDownloadSeries.overviewText(): String = metadata?.description?.takeIf(String::isNotBlank) ?: description
-internal fun SiteDownloadSeries.posterThumbnail(): String = posterThumbnailOverride?.takeIf(String::isNotBlank)
-    ?: if (provider == SiteDownloadProvider.EROTICMV) {
+internal fun SiteDownloadSeries.posterThumbnail(): String {
+    val raw = posterThumbnailOverride?.takeIf(String::isNotBlank) ?: if (provider == SiteDownloadProvider.EROTICMV) {
         metadata?.images?.firstOrNull { it.role in setOf("video-poster", "poster") }?.url?.takeIf(String::isNotBlank) ?: poster
     } else poster
+    return if (provider == SiteDownloadProvider.KISSKH) kisskhArtworkUrl(raw) else raw
+}
 
 /** A stale provider URL may be refreshed once for each selected episode, never in a retry loop. */
 internal class MediaLinkRefreshGuard {

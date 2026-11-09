@@ -198,7 +198,8 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         job?.cancel()
         val selectedSource = source
         val adapter = adapters.getValue(selectedSource); val term = query.trim(); val next = nextUrl; val filter = activeFilter
-        val key = selectedSource.name + ":" + (filter?.let { "${it.first}:${it.second.url ?: it.second.name}" } ?: term.lowercase())
+        val cacheVersion = if (selectedSource == CatalogSource.KISSKH) ":korean-tv-v2:" else ":"
+        val key = selectedSource.name + cacheVersion + (filter?.let { "${it.first}:${it.second.url ?: it.second.name}" } ?: term.lowercase())
         if (!append && !shouldPreserveCatalogResultsOnRefresh(force, displayedKey, key)) {
             items = emptyList(); nextUrl = null; displayedKey = null
         }

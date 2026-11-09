@@ -18,8 +18,8 @@ android {
         applicationId = "com.anilili.movies"
         minSdk = 35
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 6
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["listener"] = "com.example.animepahedl.ThreadTraceListener"

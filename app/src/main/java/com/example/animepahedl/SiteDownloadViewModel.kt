@@ -109,7 +109,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         error = null
     }
 
-    fun inspect(posterThumbnailOverride: String? = null) {
+    fun inspect(posterThumbnailOverride: String? = null, fallbackTitle: String? = null) {
         if (input.isBlank()) return
         val request = input.trim()
         val current = ++generation
@@ -151,8 +151,34 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
                     updateSelection(requestedEpisode?.toString().orEmpty())
                 }
             } catch (e: CancellationException) { throw e
-            } catch (_: Exception) {
-                if (generation == current) error = "Could not inspect this link. Check the URL and connection, or import a session for this site."
+            } catch (e: Exception) {
+                if (generation == current) {
+                    val kisskhUrl = runCatching { siteDownloadInput(request) }.getOrNull()
+                    val kisskhId = kisskhUrl?.queryParameter("id")?.toLongOrNull()?.takeIf { it > 0 }
+                    if (e is KisskhContentUnavailableException && kisskhId != null && !fallbackTitle.isNullOrBlank() && !posterThumbnailOverride.isNullOrBlank()) {
+                        val unavailableMessage = when (e) {
+                            is KisskhRegionRestrictionException -> "Content is not available from KissKH in your region."
+                            else -> "Content is not available from KissKH right now."
+                        }
+                        series = SiteDownloadSeries(
+                            provider = SiteDownloadProvider.KISSKH,
+                            id = kisskhId.toString(),
+                            title = fallbackTitle,
+                            poster = posterThumbnailOverride,
+                            url = request,
+                            episodes = emptyList(),
+                            description = unavailableMessage,
+                            posterThumbnailOverride = posterThumbnailOverride,
+                            contentAvailable = false
+                        )
+                    } else {
+                        error = when {
+                            e is KisskhContentUnavailableException -> "Content unavailable: ${e.message}"
+                            request.contains("kisskh.do", ignoreCase = true) -> "Could not load details from KissKH. Check your connection or try again later."
+                            else -> "Could not inspect this link. Check the URL and connection, or import a session for this site."
+                        }
+                    }
+                }
             } finally { if (generation == current) inspecting = false }
         }
     }
@@ -185,13 +211,13 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     fun dismissNotice() { notice = null }
     fun dismissError() { error = null }
     fun downloadEpisode(show: SiteDownloadSeries, episode: SiteDownloadEpisode, selectedQuality: String = "Best"): Boolean {
-        if (!ready || preparing || discarding || pending != null) return false
+        if (!ready || discarding) return false
         runPreparation(SiteDownloadPreparation(show, listOf(episode), selectedQuality))
         return true
     }
     fun downloadSelected() {
         val preview = series ?: return
-        if (!ready || preparing || discarding || pending != null || selectionError != null || selectedEpisodes.isEmpty()) return
+        if (!ready || discarding || !preview.contentAvailable || selectionError != null || selectedEpisodes.isEmpty()) return
         runPreparation(SiteDownloadPreparation(preview, selectedEpisodes.toList(), quality))
     }
     fun resumePreparation() { if (!discarding) viewModelScope.launch {
@@ -215,11 +241,19 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         }
     }
     private fun runPreparation(record: SiteDownloadPreparation) {
-        if (preparing || discarding || !ready) return
-        preparing = true
+        if (discarding || !ready) return
         submitting = true
-        pending = record
-        preparationStatus = PreparationStatus(pending = true, label = "${record.episodes.size} queued · preparing links in background", totalSelected = record.episodes.size)
+        val current = pending
+        pending = if (current == null) record else {
+            val existingIds = current.batches().filter { it.series.provider == record.series.provider && it.series.id == record.series.id }
+                .flatMap { it.episodes }.mapTo(mutableSetOf()) { it.id }
+            val additional = record.episodes.filterNot { it.id in existingIds }
+            if (additional.isEmpty()) current else current.copy(
+                queued = current.queued + SiteDownloadBatch(record.series, additional, record.quality))
+        }
+        preparationStatus = preparationStatus.copy(pending = true,
+            label = "${pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size} queued · preparing links in background",
+            totalSelected = pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size)
         error = null
         viewModelScope.launch {
             try { PreparationJobs.submit(app, PreparationJobs.SITES, record) }

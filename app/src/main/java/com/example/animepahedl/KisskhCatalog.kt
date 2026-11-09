@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -44,9 +45,20 @@ internal class KisskhApi(
                 if (response.code in setOf(301, 302, 303, 307, 308)) {
                     Redirect(response.header("Location") ?: throw IOException("KissKH returned a redirect without a destination."))
                 } else {
-                    if (!response.isSuccessful) throw IOException("KissKH returned ${response.code}. Please try again.")
                     val data = response.body.byteStream().use { it.readNBytes(5_000_001) }
                     require(data.size <= 5_000_000) { "KissKH response is too large." }
+                    if (!response.isSuccessful) {
+                        val body = runCatching { JsonParser.parseString(data.toString(Charsets.UTF_8)).asJsonObject }.getOrNull()
+                        val message = body?.dramaString("message").orEmpty()
+                        val country = body?.dramaString("country").orEmpty()
+                        if (message.equals("Legal Issues!", ignoreCase = true)) {
+                            throw KisskhRegionRestrictionException(country)
+                        }
+                        if (response.code in setOf(404, 410, 451)) {
+                            throw KisskhContentUnavailableException("KissKH does not currently serve this title.")
+                        }
+                        throw IOException("KissKH returned ${response.code}. Please try again.")
+                    }
                     JsonResult(runCatching { JsonParser.parseString(data.toString(Charsets.UTF_8)) }
                         .getOrElse { throw IOException("KissKH did not return its catalog. Please try again.") })
                 }
@@ -92,7 +104,7 @@ internal class KisskhApi(
                 SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
             }
         require(episodes.isNotEmpty()) { "This drama has no available episodes yet." }
-        return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, data.dramaString("thumbnail"),
+        return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.dramaString("thumbnail")),
             base.toString(), episodes, description = data.dramaString("description"))
     }
     suspend fun subtitles(episodeId: String): List<MediaSubtitle> {
@@ -131,6 +143,13 @@ internal class KisskhApi(
             mimeType = if (isDramaHls(parsed)) "application/x-mpegURL" else "video/mp4"))
     }
 }
+
+internal open class KisskhContentUnavailableException(message: String) : IOException(message)
+
+internal class KisskhRegionRestrictionException(country: String) : KisskhContentUnavailableException(
+    if (country.isBlank()) "KissKH blocks this request in your region. Try another network or contact the site."
+    else "KissKH blocks this request in your region ($country). Try another network or contact the site."
+)
 
 internal fun kisskhPlayableVideoUrl(raw: String): HttpUrl? = runCatching { raw.toHttpUrl() }.getOrNull()
     ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() && (isDramaHls(it) || isDramaFile(it)) }
@@ -174,6 +193,14 @@ internal fun kisskhDetailUrl(id: Long, title: String): HttpUrl = "https://kisskh
     .addPathSegment("Drama").addPathSegment(title.replace(Regex("[^\\p{L}\\p{N}]+"), "-").trim('-').ifBlank { "Drama" })
     .addQueryParameter("id", id.toString()).build()
 
+/** KissKH wraps some JPEG posters in an AVIF-transcoding proxy that fails on affected devices. */
+internal fun kisskhArtworkUrl(raw: String): String {
+    val proxy = raw.toHttpUrlOrNull()?.takeIf { it.isHttps && it.host == "serveproxy.com" } ?: return raw
+    val original = proxy.queryParameter("url")?.toHttpUrlOrNull() ?: return raw
+    return if (original.isHttps && original.host == "fragrancecdn1.site" &&
+        original.username.isEmpty() && original.password.isEmpty()) original.toString() else raw
+}
+
 /** AES-CBC request token used by kisskh.do/common.js (public web-client protocol, not a media key). */
 internal fun kisskhRequestKey(episodeId: String, guid: String = "62f176f3bb1b5b8e70e39932ad34a0c7"): String {
     require(episodeId.toLongOrNull()?.let { it > 0 } == true)
@@ -191,7 +218,7 @@ internal fun kisskhRequestKey(episodeId: String, guid: String = "62f176f3bb1b5b8
 
 internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)? = null) : SiteCatalog {
     private val api = KisskhApi(cookies = cookies)
-    private val file = File(cacheDirectory, "kisskh-korean-tv-index.json")
+    private val file = File(cacheDirectory, "kisskh-korean-tv-index-v2.json")
     private val mutex = Mutex()
     private val indexFetch = Semaphore(4)
     private var index: List<CatalogItem>? = null
@@ -199,7 +226,7 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
     private fun items(data: JsonObject): List<CatalogItem> = data.dramaArray("data").mapNotNull {
         val row = it.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
         val id = row.dramaString("id").toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
-        CatalogItem(row.dramaString("title"), kisskhDetailUrl(id, row.dramaString("title")).toString(), row.dramaString("thumbnail"), wideArtwork = true)
+        CatalogItem(row.dramaString("title"), kisskhDetailUrl(id, row.dramaString("title")).toString(), kisskhArtworkUrl(row.dramaString("thumbnail")), wideArtwork = true)
     }
     override suspend fun home(): CatalogPage = catalogPage(1)
     override suspend fun search(query: String): CatalogPage = searchPage(query, 0)

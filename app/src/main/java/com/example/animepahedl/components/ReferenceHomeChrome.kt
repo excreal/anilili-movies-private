@@ -27,7 +27,6 @@ import dev.chrisbanes.haze.HazeState
 internal fun ReferenceHomeChrome(
     model: CatalogViewModel,
     backdrop: HazeState?,
-    onLink: () -> Unit,
     onDownloads: () -> Unit,
     overHero: Boolean = true,
 ) {
@@ -35,7 +34,6 @@ internal fun ReferenceHomeChrome(
         TopAppBar(title = { androidx.compose.foundation.Image(painterResource(R.drawable.anilili_header_wordmark), "Home", Modifier.height(22.dp)) },
             actions = {
                 IconButton(onClick = onDownloads) { AppSymbol(AppIcon.Download, description = "Downloads") }
-                IconButton(onClick = onLink) { AppSymbol(AppIcon.More, description = "Open a video link") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent))
         LazyRow(Modifier.selectableGroup(), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(model.availableSources, key = { it.name }) { source ->
