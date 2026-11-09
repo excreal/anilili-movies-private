@@ -88,7 +88,7 @@ internal class EroticMvCatalog(cookieHeader: ((String) -> String)? = null) : Sit
         }
         val next = doc.selectFirst("a.next.page-numbers, a[rel=next], .pagination a.next")?.absUrl("href")
             ?.takeIf { runCatching { http.accepts(it.toHttpUrl()) }.getOrDefault(false) }
-        if (items.isEmpty() && doc.select(".no-results, .nothing-found").isEmpty())
+        if (items.isEmpty() && doc.select(".no-results, .nothing-found, .none-content-info.search-df").isEmpty())
             throw IOException("EroticMV returned no readable catalogue. Refresh the site's session cookies or try again later.")
         CatalogPage(items.values.toList(), next)
     }

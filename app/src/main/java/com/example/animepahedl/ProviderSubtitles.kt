@@ -85,15 +85,21 @@ internal fun normalizeKisskhSubtitles(input: String, extension: String): String 
         val lines = block.lines()
         val timestamp = lines.indexOfFirst { it.contains("-->") }
         if (timestamp < 0) return@forEach
+        val time = Regex("^\\s*\\d{1,2}:\\d{2}:\\d{2}[,.]\\d{1,3}\\s+-->\\s+\\d{1,2}:\\d{2}:\\d{2}[,.]\\d{1,3}(?:\\s+.*)?$")
+        if (!time.matches(lines[timestamp])) return@forEach
         var text = lines.drop(timestamp + 1).joinToString("\n").trim()
         if (text.isEmpty()) return@forEach
         if (keyAndIv != null) {
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyAndIv.first.toByteArray(Charsets.UTF_8), "AES"),
-                IvParameterSpec(keyAndIv.second.toByteArray(Charsets.UTF_8)))
-            val encoded = java.util.Base64.getMimeDecoder().decode(text)
-            val body = if (encoded.size >= 16 && encoded.take(8).toByteArray().toString(Charsets.US_ASCII) == "Salted__") encoded.copyOfRange(16, encoded.size) else encoded
-            text = cipher.doFinal(body).toString(Charsets.UTF_8)
+            // The website drops an unreadable encrypted cue and continues with the next one.
+            // Keep that behavior so one truncated/corrupt block does not lose valid captions.
+            text = try {
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyAndIv.first.toByteArray(Charsets.UTF_8), "AES"),
+                    IvParameterSpec(keyAndIv.second.toByteArray(Charsets.UTF_8)))
+                val encoded = java.util.Base64.getMimeDecoder().decode(text)
+                val body = if (encoded.size >= 16 && encoded.take(8).toByteArray().toString(Charsets.US_ASCII) == "Salted__") encoded.copyOfRange(16, encoded.size) else encoded
+                cipher.doFinal(body).toString(Charsets.UTF_8).takeIf(String::isNotBlank) ?: return@forEach
+            } catch (_: Exception) { return@forEach }
         }
         val atTop = text.contains('♫') || text.contains('♪') || text.contains('[') || text.contains("{\\an8}")
         text = text.replace("{\\an8}", "")

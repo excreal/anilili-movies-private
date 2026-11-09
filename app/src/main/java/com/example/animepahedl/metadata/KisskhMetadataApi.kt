@@ -127,36 +127,56 @@ internal class KisskhMetadataApi(cookieHeader: ((String) -> String)? = null) : S
             ?: throw IllegalArgumentException("The episode does not belong to this Korean drama.")
         val attributes = episode.attributes.toMutableMap()
         val payloads = episode.payloads.toMutableList()
-        var subtitles = emptyList<MetadataSubtitle>()
-        try {
-            val descriptorUrl = origin.resolve("api/Sub/$id")!!.newBuilder()
-                .addQueryParameter("kkey", kisskhRequestKey(id, "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp")).build()
-            val response = http.get(descriptorUrl.toString())
-            val tracks = response.json()
-            require(tracks.isJsonArray) { "KissKH returned invalid subtitle descriptors." }
-            payloads += response.payload("subtitle-descriptors")
-            subtitles = tracks.asJsonArray.mapNotNull { element ->
-                val track = element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
-                val src = track.kString("src").takeIf(String::isNotBlank) ?: return@mapNotNull null
-                val parsed = runCatching { src.toHttpUrl() }.getOrNull()?.takeIf { it.scheme in setOf("http", "https") } ?: return@mapNotNull null
-                MetadataSubtitle(parsed.toString(), track.kString("label"), track.kString("land").ifBlank { null },
-                    parsed.encodedPath.substringAfterLast('.', "").ifBlank { null }, track.kString("default").equals("true", true), track.kAttributes())
+        // These independent JSON descriptor requests should not serialize a playable episode
+        // behind a slow caption endpoint. Neither request downloads media/caption bodies.
+        val descriptors = coroutineScope {
+            val subtitles = async {
+                try {
+                    val descriptorUrl = origin.resolve("api/Sub/$id")!!.newBuilder()
+                        .addQueryParameter("kkey", kisskhRequestKey(id, "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp")).build()
+                    val response = http.get(descriptorUrl.toString())
+                    val tracks = response.json()
+                    require(tracks.isJsonArray) { "KissKH returned invalid subtitle descriptors." }
+                    val mapped = tracks.asJsonArray.mapNotNull { element ->
+                        val track = element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
+                        val src = track.kString("src").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        val parsed = runCatching { src.toHttpUrl() }.getOrNull()?.takeIf {
+                            it.isHttps && it.username.isEmpty() && it.password.isEmpty()
+                        } ?: return@mapNotNull null
+                        MetadataSubtitle(parsed.toString(), track.kString("label"), track.kString("land").ifBlank { null },
+                            parsed.encodedPath.substringAfterLast('.', "").ifBlank { null }, track.kString("default").equals("true", true), track.kAttributes())
+                    }
+                    mapped to response.payload("subtitle-descriptors")
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
             }
-            attributes["subtitleMetadataStatus"] = "available"
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { attributes["subtitleMetadataStatus"] = "unavailable" }
-        try {
-            // This retrieves JSON descriptors only, never the video's bytes or subtitle contents.
-            val descriptorUrl = origin.resolve("api/DramaList/Episode/$id.png")!!.newBuilder()
-                .addQueryParameter("err", "false").addQueryParameter("ts", "null").addQueryParameter("time", "null")
-                .addQueryParameter("kkey", kisskhRequestKey(id)).build()
-            val response = http.get(descriptorUrl.toString())
-            val descriptor = response.json().asJsonObject
-            payloads += response.payload("episode-video-descriptor")
-            attributes.putAll(descriptor.kAttributes().mapKeys { "video.${it.key}" })
-            attributes["videoMetadataStatus"] = "available"
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { attributes["videoMetadataStatus"] = "unavailable" }
+            val video = async {
+                try {
+                    val descriptorUrl = origin.resolve("api/DramaList/Episode/$id.png")!!.newBuilder()
+                        .addQueryParameter("err", "false").addQueryParameter("ts", "null").addQueryParameter("time", "null")
+                        .addQueryParameter("kkey", kisskhRequestKey(id)).build()
+                    val response = http.get(descriptorUrl.toString())
+                    val descriptor = response.json().asJsonObject
+                    descriptor to response.payload("episode-video-descriptor")
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
+            }
+            subtitles.await() to video.await()
+        }
+        val (subtitleResult, videoResult) = descriptors
+        val subtitles = subtitleResult?.first.orEmpty()
+        subtitleResult?.second?.let(payloads::add)
+        attributes["subtitleMetadataStatus"] = if (subtitleResult == null) "unavailable" else "available"
+        videoResult?.let { (descriptor, payload) ->
+            val videoAttributes = descriptor.kAttributes().filterKeys { it !in setOf("Video", "Video_tmp") }
+                .mapKeys { "video.${it.key}" }.toMutableMap()
+            listOf("Video", "Video_tmp").forEach { key ->
+                kisskhPlayableVideoUrl(descriptor.kString(key))?.let { videoAttributes["video.$key"] = it.toString() }
+            }
+            attributes.putAll(videoAttributes)
+            payloads += payload
+        }
+        attributes["videoMetadataStatus"] = if (videoResult == null) "unavailable" else "available"
         return episode.copy(subtitles = subtitles, attributes = attributes, payloads = payloads)
     }
 
@@ -240,8 +260,11 @@ internal class KisskhMetadataApi(cookieHeader: ((String) -> String)? = null) : S
         val number = row.kString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString() ?: row.kString("number")
         val id = row.kString("id")
         val url = show.url.toHttpUrl().newBuilder().addPathSegment("Episode-$number").addQueryParameter("ep", id).build().toString()
+        val attributes = row.kAttributes().toMutableMap()
+        // `sub` is an opaque website hint; retain it and expose only whether it is positive.
+        attributes["hasSubtitleHint"] = ((row.get("sub")?.takeIf { it.isJsonPrimitive }?.asString?.toDoubleOrNull() ?: 0.0) > 0).toString()
         return MetadataEpisode(id, number, row.kString("title").ifBlank { "Episode $number" }, url,
-            attributes = row.kAttributes(), payloads = listOf(metadataPayload("episode-row", url, row)))
+            attributes = attributes, payloads = listOf(metadataPayload("episode-row", url, row)))
     }
     private companion object {
         val sections = linkedMapOf("featured" to "Show", "lastUpdate" to "LastUpdate?ispc=false", "upcoming" to "Upcoming?ispc=false",

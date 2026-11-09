@@ -1,6 +1,6 @@
 # Kiss18 public metadata API
 
-Inspected live on 2026-11-08. Implementation: `metadata/Kiss18MetadataApi.kt`; UI/playback adapters remain unchanged. `MetadataSite.KISS18` supplies `browse`, `details`, `episode` and `taxonomy` independently of UI cards.
+Inspected live on 2026-11-08. Implementation: `metadata/Kiss18MetadataApi.kt`; `Kiss18Catalog` supplies the consumer-facing playable catalogue. `MetadataSite.KISS18` supplies `browse`, `details`, `episode` and `taxonomy` independently of UI cards.
 
 ## Sources actually visited
 
@@ -10,6 +10,7 @@ Inspected live on 2026-11-08. Implementation: `metadata/Kiss18MetadataApi.kt`; U
 | [Public browse module](https://kiss18.vip/catalogue-browse.mjs) | Complete title/episode snapshot and legacy snapshot digest. |
 | [Catalogue client](https://kiss18.vip/catalogue.mjs) | Explicit duplicate-title handling and owner-approved continuation groups, aliases and availability semantics. |
 | [Editorial module](https://kiss18.vip/editorial.mjs) | Public presentation title/premise/artwork, moods, final-episode hints, kind, featured/arrival IDs, related part groups, longer descriptions and video-preview metadata. |
+| [SEO campaign module](https://kiss18.vip/seo-campaign.mjs) | Declared public genre collections at `/genres/mafia-romance` and `/genres/werewolf-romance`, with member IDs and editorial reasons. |
 | [A New Life detail](https://kiss18.vip/title/a-new-life) | Canonical page/social metadata and breadcrumbs. |
 | [Episode 1](https://kiss18.vip/watch/a-new-life/1) | Episode WebPage/breadcrumb metadata; playback chunk located through public snapshot. |
 | `/playback/{playbackChunk}.json` | Matching episode's candidate IDs, stream version, provider/source, format, refreshable flag, delivery generation, direct URL or gateway/resolver metadata. |
@@ -23,19 +24,19 @@ The inspected snapshot contained 417 records and 12,336 listed episodes. These a
 - Source title plus public presentation title and alternative source titles; synopsis, source premise and public longer detail premise retained with provenance.
 - Main cover, every responsive-cover URL and dimensions, alternate artwork and its responsive variants, selected featured artwork, episode thumbnail and preview-video URL.
 - Original image bytes/SHA256/variant objects remain in `catalogueRecord`; the normalized image model keeps role and dimensions. Portrait artwork is not falsely labelled a landscape banner.
-- Categories exactly as advertised; public editorial `moods` become tags. Compound category strings remain source strings rather than invented individual genres. The website calls the category field `genre` internally, but it does not publish a separate authoritative genre taxonomy.
+- Source categories exactly as advertised; public editorial `moods` become tags. The SEO campaign's two genre collections are exposed as `genres` taxonomy terms and per-record genre links. Genre membership is marked as declared campaign membership; taxonomy counts report how many declared IDs are present in the current catalogue snapshot and retain the declared and visible counts separately. These editorial groups are not inferred from category text.
 - Listed episode count, playable episode count, original `inventory_complete`, per-episode playable flag and public final-episode hint. Inventory completeness is not falsely converted into a publication-completion date or status.
 - Episode ordinal/title, public video GUID, duration seconds, upload date, thumbnail, source candidates and public playback-chunk reference. Optional nested values and future public fields remain in per-record/per-episode JSON payloads.
 - Related numbered parts and explicit continuation links, plus a `website_canonical` relationship for duplicate Bunny records paired with a same-title Shortpeak canonical record. Raw records stay separate; inventories are not speculatively merged or renumbered by this metadata API.
-- Public featured/popular/arrival/collection sections. Source rank is a display-placement attribute, never exposed as a numeric audience rating.
+- Public featured/popular/arrival/collection sections. Admin rows use only enabled rows and their `label`/`titles` fields. Sections are omitted from search, genre, and filtered pages. Final public presentation and SEO overlays supply title, premise, final-episode and rank data. Source rank is a display-placement attribute, never exposed as a numeric audience rating.
 - Full matching playback-candidate JSON is exposed only when `episode()` is explicitly requested, not eagerly for every browse record. Same-site direct HLS master metadata retains codec/bandwidth/resolution renditions and advertises subtitle renditions when present. Foreign/gated resolver media is left to the existing playback adapter.
 - Schema.org/social metadata from the detail page is merged into detail images/links/payloads without replacing the catalogue's stable identity.
 
 ## Browse and filtering
 
-`browse(MetadataBrowseQuery(query=..., page=..., filters=...))` searches the complete cached source snapshot and supports `category`, `tag`, `kind` (`series`, `clip`, `test`), `playable` (`true`/`false`) and `pageSize` (1–500, default 48). Pagination is local because the public site ships its full catalogue snapshot; returned continuation URLs preserve the filters and search term. `taxonomy()` returns source categories, public moods and website story kinds with counts. Unknown filter keys, unknown URL parameters, invalid kinds/booleans, invalid page sizes and nonpositive pages raise explicit errors. Requests must belong to approved HTTPS source hosts.
+`browse(MetadataBrowseQuery(query=..., page=..., filters=...))` searches the complete cached source snapshot and supports `category`, `tag`, `genre`, story `kind` (`series`, `clip`, `test`, `all`), and availability selectors (`partial`, `unavailable`, `playable`) plus the `playable=true|false` boolean and `pageSize` (1–500, default 48). SEO genre routes and browse/search URLs are accepted. Pagination is local because the public site ships its full catalogue snapshot; returned continuation URLs preserve the filters and search term. `taxonomy()` returns source categories, public moods, story kinds and declared SEO genres. Unknown filter keys, unknown URL parameters, invalid kinds/booleans, invalid page sizes and nonpositive pages raise explicit errors before snapshot downloads. Requests must belong to approved HTTPS source hosts.
 
-The snapshot/editorial data cache lasts ten minutes per adapter instance. Reads are size bounded, cancellable and source-host validated on redirect; imported cookies are scoped through `MetadataHttp`. No remote JavaScript executes. A small data-literal reader extracts only JSON-like objects/arrays/scalars and the site's text-cleaning wrapper, not arbitrary expressions.
+The snapshot/editorial data cache lasts ten minutes per adapter instance. The consumer catalogue retains one metadata adapter across page loads, and snapshot parsing, filtering and record conversion run on its injected IO dispatcher. Reads are size bounded, cancellable and source-host validated on redirect; imported cookies are scoped through `MetadataHttp`. Optional detail HTML enrichment keeps snapshot data on ordinary network/parse failures and propagates cancellation or verification challenges. No remote JavaScript executes. A small data-literal reader extracts only JSON-like objects/arrays/scalars and the site's text-cleaning wrapper, not arbitrary expressions.
 
 ## Absent or conditional information
 

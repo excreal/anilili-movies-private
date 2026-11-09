@@ -285,7 +285,7 @@ private fun MetadataTermChips(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(unique, key = { it.url ?: it.id ?: it.name }) { term ->
                 val filterable = when (provider) {
-                    SiteDownloadProvider.KISS18 -> kind in setOf("tag", "category")
+                    SiteDownloadProvider.KISS18 -> kind in setOf("tag", "category", "genre")
                     SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.NARTO, SiteDownloadProvider.EROTICMV -> term.url != null
                     else -> false
                 }

@@ -11,14 +11,20 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.StringReader
 
+private const val DRAMATIP_MAX_PAGE = 100
+
 /** Dramatip's public HTML/JSON-LD/React Flight API. No telemetry or account mutations. */
-internal class DramatipMetadataApi(cookieHeader: ((String) -> String)? = null) : SiteMetadataApi {
+internal class DramatipMetadataApi(
+    cookieHeader: ((String) -> String)? = null,
+    fetch: (suspend (String) -> MetadataResponse)? = null
+) : SiteMetadataApi {
     override val site = MetadataSite.DRAMATIP
     private val http = MetadataHttp(setOf("dramatip.net", "www.dramatip.net"), cookieHeader)
+    private val get: suspend (String) -> MetadataResponse = fetch ?: { http.get(it) }
     private val origin = "https://dramatip.net/".toHttpUrl()
 
     override suspend fun browse(query: MetadataBrowseQuery): MetadataPage {
-        require(query.page > 0) { "Page must be positive." }
+        require(query.page in 1..DRAMATIP_MAX_PAGE) { "Page must be between 1 and $DRAMATIP_MAX_PAGE." }
         val unsupported = query.filters.keys - setOf("category", "source", "language")
         require(unsupported.isEmpty()) { "Unsupported Dramatip filters: ${unsupported.joinToString()}" }
         require(!(query.filters.containsKey("category") && query.filters.containsKey("source"))) { "Choose a category or a source, not both." }
@@ -30,27 +36,55 @@ internal class DramatipMetadataApi(cookieHeader: ((String) -> String)? = null) :
         fun slug(name: String): String? = query.filters[name]?.also {
             require(it.matches(Regex("[a-zA-Z0-9_-]+"))) { "Invalid $name filter." }
         }
+        val homepage = query.query.isBlank() && query.filters.keys.none { it in setOf("category", "source") }
         val route = when {
             query.query.isNotBlank() -> "$prefix/search"
             slug("category") != null -> "$prefix/category/${slug("category")}"
             slug("source") != null -> "$prefix/source/${slug("source")}"
-            query.page > 1 -> "$prefix/series"
             else -> prefix.ifBlank { "/" }
         }
-        val target = query.url?.let(http::checked) ?: origin.newBuilder().encodedPath(
-            if (query.page > 1 && query.query.isBlank()) "${route.trimEnd('/')}/page/${query.page}" else route
+        var target = query.url?.let(http::checked) ?: origin.newBuilder().encodedPath(
+            if (query.page > 1 && !homepage && query.query.isBlank()) "${route.trimEnd('/')}/page/${query.page}" else route
         ).apply {
             if (query.query.isNotBlank()) addQueryParameter("q", query.query.trim())
             if (query.page > 1 && query.query.isNotBlank()) addQueryParameter("page", query.page.toString())
         }.build()
-        val response = http.get(target.toString())
+        var response = get(target.toString())
+        dramatipRequireNotFoundAbsent(response.document())
+        if (homepage && query.page > 1 && query.url == null) {
+            // The homepage can advertise a different collection than its first section's See all link.
+            val visited = linkedSetOf(target.toString(), response.url)
+            val firstPage = parseDramatipMetadataPage(response.text, response.url)
+            val advertised = firstPage.nextUrl?.let(http::checked)
+                ?: throw java.io.IOException("Dramatip did not advertise a homepage continuation.")
+            if (!visited.add(advertised.toString())) throw java.io.IOException("Dramatip repeated a homepage pagination URL.")
+            target = if (query.page == 2) advertised else {
+                val path = advertised.encodedPath
+                require(advertised.encodedQuery == null && advertised.encodedFragment == null &&
+                    Regex("^/(?:[A-Za-z]{2,3}/)?(?:category|source)/[A-Za-z0-9_-]+/page/2/?$").matches(path)) {
+                    "Dramatip's homepage continuation does not expose a safe page-number route."
+                }
+                val pageSegment = advertised.pathSegments.indexOfLast { it.isNotEmpty() }
+                advertised.newBuilder().setPathSegment(pageSegment, query.page.toString()).build()
+                    .also { derived ->
+                        if (!visited.add(derived.toString())) throw java.io.IOException("Dramatip repeated a homepage pagination URL.")
+                    }
+            }
+            response = get(target.toString())
+            dramatipRequireNotFoundAbsent(response.document())
+            val finalUrl = http.checked(response.url).toString()
+            if (finalUrl != target.toString() && !visited.add(finalUrl)) {
+                throw java.io.IOException("Dramatip repeated a homepage pagination URL.")
+            }
+        }
         return parseDramatipMetadataPage(response.text, response.url)
     }
 
     override suspend fun details(url: String): MetadataDetails {
         val target = http.checked(url)
         dramaRoute(target, SiteDownloadProvider.DRAMATIP)
-        val response = http.get(target.toString())
+        val response = get(target.toString())
+        dramatipRequireNotFoundAbsent(response.document())
         return parseDramatipMetadataDetails(response.text, response.url)
     }
 
@@ -58,7 +92,8 @@ internal class DramatipMetadataApi(cookieHeader: ((String) -> String)? = null) :
         val target = http.checked(url)
         val (_, requested) = dramaRoute(target, SiteDownloadProvider.DRAMATIP)
         require(requested != null) { "Choose an episode URL." }
-        val response = http.get(target.toString())
+        val response = get(target.toString())
+        dramatipRequireNotFoundAbsent(response.document())
         val parsed = parseDramatipMetadataDetails(response.text, response.url)
         require(dramaRoute(http.checked(response.url), SiteDownloadProvider.DRAMATIP) == dramaRoute(target, SiteDownloadProvider.DRAMATIP)) {
             "Dramatip redirected to another episode."
@@ -69,15 +104,22 @@ internal class DramatipMetadataApi(cookieHeader: ((String) -> String)? = null) :
         val player = objects.firstOrNull { it.has("sourceFirst") }
         val source = player?.get("sourceFirst")?.takeIf { it.isJsonObject }?.asJsonObject
         val descriptor = source?.let { listOf(metadataPayload("episode-source-descriptor", response.url, it)) }.orEmpty()
-        return episode.copy(subtitles = (episode.subtitles + dramatipSubtitleTracks(source, response.url)).distinctBy { it.url },
+        val schema = metadataFromDocument(response.document())
+        return episode.copy(
+            title = schema.title.takeIf { schema.format == "TVEpisode" && it.isNotBlank() } ?: episode.title,
+            description = schema.description.takeIf { schema.format == "TVEpisode" } ?: episode.description,
+            images = (episode.images + schema.images.filter { schema.format == "TVEpisode" }).distinctBy { it.url to it.role },
+            durationSeconds = schema.durationSeconds.takeIf { schema.format == "TVEpisode" } ?: episode.durationSeconds,
+            releaseDate = schema.releaseDate.takeIf { schema.format == "TVEpisode" } ?: episode.releaseDate,
+            subtitles = (episode.subtitles + dramatipSubtitleTracks(source, response.url)).distinctBy { it.url },
             payloads = episode.payloads + descriptor,
             attributes = episode.attributes + source?.dramaString("source").orEmpty().takeIf(String::isNotBlank)
                 ?.let { mapOf("source" to it) }.orEmpty())
     }
 
     override suspend fun taxonomy(): MetadataTaxonomy {
-        val categories = http.get("https://dramatip.net/categories").document()
-        val sources = http.get("https://dramatip.net/sources").document()
+        val categories = get("https://dramatip.net/categories").document()
+        val sources = get("https://dramatip.net/sources").document()
         val groups = mapOf("categories" to dramatipTerms(categories, "/category/"),
             "sources" to dramatipTerms(sources, "/source/"), "languages" to dramatipLanguages(sources))
         val payload = JsonObject().apply { groups.forEach { (key, terms) ->
@@ -90,16 +132,24 @@ internal class DramatipMetadataApi(cookieHeader: ((String) -> String)? = null) :
 /** Public parser entry points also permit inspecting saved responses without networking. */
 internal fun parseDramatipMetadataPage(html: String, url: String): MetadataPage {
     val doc = org.jsoup.Jsoup.parse(html, url)
+    dramatipRequireNotFoundAbsent(doc)
     val items = dramatipCards(doc)
     val sections = doc.select("section").mapNotNull { section ->
         val cards = dramatipCards(section)
-        val name = section.selectFirst("h2,h3")?.text().orEmpty().ifBlank { section.attr("aria-label") }
+        val name = section.selectFirst(":scope > h2, :scope > h3, :scope > header h2, :scope > header h3, :scope > div > h2, :scope > div > h3")
+            ?.text().orEmpty().ifBlank { section.attr("aria-label") }
         if (cards.isEmpty() || name.isBlank()) null else MetadataSection(name, cards,
             section.select("a[href]").firstOrNull { it.text().contains("See all", true) }?.absUrl("href"))
     }
-    val next = doc.selectFirst("a[rel=next]")?.absUrl("href")?.takeIf(::dramatipMetadataUrl)
+    val next = doc.select("a[href]").firstOrNull { anchor ->
+        anchor.attr("rel").split(Regex("\\s+")).any { it.equals("next", true) } ||
+            dramatipIsNextLabel(anchor.attr("aria-label")) || dramatipIsNextLabel(anchor.text())
+    }?.absUrl("href")?.takeIf(::dramatipMetadataUrl)
     val pagination = JsonObject().apply {
-        doc.select("a[aria-label][href]").filter { it.attr("aria-label").contains("page", true) || it.attr("aria-label") in listOf("Next", "Last") }
+        doc.select("a[aria-label][href]").filter {
+            val label = it.attr("aria-label").trim().lowercase()
+            label.contains("page") || label.contains("seite") || dramatipPaginationLabels.contains(label)
+        }
             .forEach { addProperty(it.attr("aria-label"), it.absUrl("href")) }
     }
     return MetadataPage(items, next, sections = sections, filters = mapOf(
@@ -110,6 +160,7 @@ internal fun parseDramatipMetadataPage(html: String, url: String): MetadataPage 
 
 internal fun parseDramatipMetadataDetails(html: String, url: String): MetadataDetails {
     val doc = org.jsoup.Jsoup.parse(html, url)
+    dramatipRequireNotFoundAbsent(doc)
     val (slug, _) = dramaRoute(url.toHttpUrl(), SiteDownloadProvider.DRAMATIP)
     val objects = dramatipFlightObjects(doc)
     val player = objects.firstOrNull { it.has("sourceFirst") }
@@ -206,7 +257,13 @@ private fun dramatipTerms(doc: Document, prefix: String): List<MetadataTerm> = d
     val raw = anchor.absUrl("href")
     val url = runCatching { raw.toHttpUrl() }.getOrNull() ?: return@mapNotNull null
     if (!dramatipMetadataUrl(raw) || !url.encodedPath.matches(Regex("^(?:/[a-z]{2,3})?${Regex.escape(prefix)}[^/]+/?$"))) return@mapNotNull null
-    val name = anchor.selectFirst("span")?.text()?.takeIf(String::isNotBlank) ?: anchor.text()
+    val semanticSpans = anchor.select("span").map { it.text().trim() }.filter {
+        it.isNotBlank() && !it.matches(Regex("(?i)([A-Z]{1,3}|[0-9,]+\\s+titles|[0-9,]+)"))
+    }
+    val cleaned = anchor.clone().apply { select("img,svg,[aria-hidden=true]").remove() }.text()
+        .replace(Regex("(?i)[0-9,]+\\s+titles?"), "").trim()
+    val name = semanticSpans.lastOrNull() ?: cleaned
+    if (name.isBlank()) return@mapNotNull null
     val count = Regex("([0-9,]+)\\s+titles").find(anchor.text())?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
     MetadataTerm(name, url.pathSegments.lastOrNull { it.isNotBlank() }, raw, count,
         anchor.selectFirst("img")?.absUrl("src")?.takeIf(String::isNotBlank)?.let { mapOf("icon" to it) }.orEmpty())
@@ -217,18 +274,49 @@ private fun dramatipLanguages(doc: Document): List<MetadataTerm> = doc.select("a
     if (!dramatipMetadataUrl(raw)) null else MetadataTerm(anchor.text().ifBlank { anchor.attr("hreflang") }, anchor.attr("hreflang"), raw)
 }.distinctBy { it.id }
 
-private fun dramatipSubtitleTracks(source: JsonObject?, pageUrl: String): List<MetadataSubtitle> {
+internal fun dramatipSubtitleTracks(source: JsonObject?, pageUrl: String): List<MetadataSubtitle> {
     val value = source?.get("subtitle") ?: return emptyList()
     val nodes = if (value.isJsonArray) value.asJsonArray.toList() else listOf(value)
     return nodes.mapNotNull { node ->
         if (!node.isJsonObject) return@mapNotNull null
         val obj = node.asJsonObject
-        val raw = obj.dramaString("url", "src")
-        val url = pageUrl.toHttpUrl().resolve(raw)?.takeIf { raw.isNotBlank() && it.scheme == "https" && it.username.isEmpty() && it.password.isEmpty() } ?: return@mapNotNull null
+        val encoded = obj.dramaString("enc", "url", "src", "file", "data")
+        if (encoded.isBlank()) return@mapNotNull null
+        // Subtitle URLs use the same AES-GCM wrapper as media sources. Keep already-public
+        // URLs intact, but never let a decoded descriptor bypass the HTTPS/credential checks.
+        val raw = if (encoded.matches(Regex("(?i)^https?://.*")) || encoded.startsWith("/") ||
+            encoded.startsWith("./") || encoded.startsWith("../")) encoded
+        else runCatching { decryptDramaSource(encoded) }.getOrNull() ?: return@mapNotNull null
+        val url = pageUrl.toHttpUrl().resolve(raw)?.takeIf {
+            it.scheme == "https" && it.host.isNotBlank() && it.username.isEmpty() && it.password.isEmpty()
+        } ?: return@mapNotNull null
         val language = obj.dramaString("lang", "language").takeIf(String::isNotBlank)
+        val extension = url.encodedPath.substringAfterLast('.', "").lowercase().takeIf { it in setOf("vtt", "srt", "ass", "ssa", "ttml", "xml") }
+        val declaredFormat = obj.dramaString("format", "type", "mimeType", "mime_type").lowercase()
+            .substringAfterLast('/').substringBefore(';').takeIf { it in setOf("vtt", "srt", "ass", "ssa", "ttml", "xml") }
+        val isDefault = listOf("default", "isDefault", "is_default").any { key ->
+            obj.get(key)?.let { it.isJsonPrimitive && (it.asJsonPrimitive.isBoolean && it.asBoolean || it.asString.equals("true", true) || it.asString == "1") } == true
+        }
         MetadataSubtitle(url.toString(), obj.dramaString("label").ifBlank { language ?: "Subtitles" }, language,
-            url.encodedPath.substringAfterLast('.').takeIf { it in setOf("vtt", "srt", "ass", "ssa") }, true,
+            declaredFormat ?: extension,
+            isDefault,
             obj.entrySet().filter { it.value.isJsonPrimitive }.associate { it.key to it.value.asString })
+    }
+}
+
+private val dramatipNextLabels = setOf("next", "weiter", "nächste", "naechste", "nächste seite", "naechste seite")
+private val dramatipPaginationLabels = dramatipNextLabels + setOf("last", "previous", "prev", "zurück", "zurueck", "letzte", "vorherige", "vorherige seite", "letzte seite")
+private fun dramatipIsNextLabel(raw: String): Boolean = raw.trim().lowercase()
+    .removeSuffix(" page").removeSuffix(" seite") in dramatipNextLabels
+
+internal fun dramatipRequireNotFoundAbsent(doc: Document) {
+    val title = doc.title().trim()
+    val heading = doc.selectFirst("h1")?.text().orEmpty().trim()
+    val text = doc.body().text().take(20_000).lowercase()
+    val titleSignals = listOf(title, heading).any { it.matches(Regex("(?i)(404|not found|page not found|seite nicht gefunden|nicht gefunden)(?:\\s*[-|:].*)?")) }
+    val bodySignal = listOf("404 - page not found", "page not found", "seite wurde nicht gefunden", "seite nicht gefunden", "title not found", "series not found").any(text::contains)
+    if (titleSignals || bodySignal || doc.selectFirst("#__next[data-not-found=true], [data-testid=not-found]") != null) {
+        throw java.io.IOException("Dramatip page was not found.")
     }
 }
 

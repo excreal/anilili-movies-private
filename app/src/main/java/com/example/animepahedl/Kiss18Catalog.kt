@@ -26,6 +26,7 @@ import kotlin.coroutines.resumeWithException
 
 /** Uses the same public catalogue snapshot and local search model as Kiss18's web app. */
 internal class Kiss18Catalog : SiteCatalog {
+    private val metadataApi by lazy { Kiss18MetadataApi() }
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
     private data class Entry(val item: CatalogItem, val search: String)
@@ -60,18 +61,20 @@ internal class Kiss18Catalog : SiteCatalog {
     }
 
     override suspend fun filter(kind: String, term: SiteShowTerm): CatalogPage {
-        require(kind == "category" || kind == "tag") { "Kiss18 only filters by category and tags." }
-        return metadataPage("https://kiss18.vip/browse", mapOf(kind to term.name))
+        require(kind in setOf("category", "tag", "genre")) { "Kiss18 supports category, tag and genre filters." }
+        val url = if (kind == "genre") term.url ?: throw IllegalArgumentException("Kiss18 genre has no public route.") else "https://kiss18.vip/browse"
+        return metadataPage(url, if (kind == "genre") emptyMap() else mapOf(kind to term.name))
     }
 
     /** Kiss18 ships all browse metadata in one snapshot; there is no server pagination. */
     override suspend fun page(url: String): CatalogPage {
         val target = url.toHttpUrl()
         require(target.isHttps && target.host == origin.host && target.username.isEmpty() && target.password.isEmpty()) { "Invalid Kiss18 catalogue URL." }
-        return when (target.encodedPath.trimEnd('/')) {
-            "" -> home()
-            "/search" -> search(target.queryParameter("q").orEmpty())
-            "/browse" -> metadataPage(url, emptyMap())
+        return when {
+            target.encodedPath.trimEnd('/').matches(Regex("/genres/[a-z0-9]+(?:-[a-z0-9]+)*")) -> metadataPage(url, emptyMap())
+            target.encodedPath.trimEnd('/') == "" -> home()
+            target.encodedPath.trimEnd('/') == "/search" -> search(target.queryParameter("q").orEmpty())
+            target.encodedPath.trimEnd('/') == "/browse" -> metadataPage(url, emptyMap())
             else -> throw IOException("Kiss18 does not provide that catalogue page.")
         }
     }
@@ -80,7 +83,7 @@ internal class Kiss18Catalog : SiteCatalog {
         val target = url.toHttpUrl().newBuilder().setQueryParameter("pageSize", "48")
         (filters + ("playable" to "true")).forEach { (key, value) -> target.setQueryParameter(key, value) }
         val query = MetadataBrowseQuery(url = target.build().toString())
-        val result = Kiss18MetadataApi().browse(query)
+        val result = metadataApi.browse(query)
         return CatalogPage(result.items.mapNotNull { item -> item.images.firstOrNull { it.role == "poster" }?.url?.let { poster ->
             CatalogItem(item.title, item.url, poster)
         } }, result.nextUrl)
@@ -120,7 +123,8 @@ internal class Kiss18Catalog : SiteCatalog {
         raw.isNotBlank() && it.isHttps && it.username.isEmpty() && it.password.isEmpty()
     }?.toString().orEmpty()
     private fun normalize(raw: String): String = Normalizer.normalize(raw, Normalizer.Form.NFKD)
-        .replace(Regex("\\p{M}+"), "").lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        .replace(Regex("\\p{M}+"), "").replace(Regex("['’‘`´]"), "").lowercase(Locale.ROOT)
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
     private suspend fun fetch(url: String): String {
         val call = client.newCall(Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build())

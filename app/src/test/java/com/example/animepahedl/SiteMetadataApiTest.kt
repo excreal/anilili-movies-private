@@ -6,6 +6,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import org.junit.Assert.*
 import org.junit.Test
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class SiteMetadataApiTest {
     @Test fun extractedMetadataFlowsIntoPersistableAppDetailModel() {
@@ -79,6 +80,79 @@ class SiteMetadataApiTest {
         val bad = constructor.newInstance("globalThis.alert(1)", 0)
         try { type.getDeclaredMethod("read").apply { isAccessible = true }.invoke(bad); fail("Executable JS must not be interpreted") }
         catch (_: java.lang.reflect.InvocationTargetException) { }
+    }
+
+    @Test fun kiss18FetchedModuleFixturesRetainDeclaredGenreMembershipAndEnabledRows() {
+        // Sanitized data-only excerpts matching the public module shapes; no sessions or private data.
+        fun literal(source: String): JsonObject {
+            val type = Class.forName("com.example.animepahedl.metadata.Kiss18Literal")
+            val constructor = type.getDeclaredConstructor(String::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
+            return type.getDeclaredMethod("read").apply { isAccessible = true }
+                .invoke(constructor.newInstance(source, 0)) as JsonObject
+        }
+        val campaign = literal("""{collections:[{slug:'mafia-romance',title:'Mafia Romance Short Dramas',members:[{titleId:'chartdrama:shortpeak:bound-by-betrayal',reason:'Declared campaign member'}]},{slug:'werewolf-romance',title:'Werewolf Romance Short Dramas',members:[{titleId:'chartdrama:hdrama:a-mates-curse',reason:'Declared campaign member'}]}]}""")
+        assertEquals(listOf("mafia-romance", "werewolf-romance"), campaign.getAsJsonArray("collections").map { it.asJsonObject.get("slug").asString })
+        assertEquals("chartdrama:shortpeak:bound-by-betrayal", campaign.getAsJsonArray("collections")[0].asJsonObject.getAsJsonArray("members")[0].asJsonObject.get("titleId").asString)
+        val editorial = literal("""{sections:[{enabled:true,label:'Curated stories',titles:['public:id:one','public:id:two']},{enabled:false,label:'Hidden row',titles:['public:id:three']}]}""")
+        val enabled = editorial.getAsJsonArray("sections").map { it.asJsonObject }.filter { it.get("enabled").asBoolean }
+        assertEquals("Curated stories", enabled.single().get("label").asString)
+        assertEquals(2, enabled.single().getAsJsonArray("titles").size())
+    }
+
+    @Test fun kiss18SearchNormalizationTreatsApostropheVariantsEqually() {
+        val owner = Class.forName("com.example.animepahedl.metadata.Kiss18MetadataApiKt")
+        val normalize = owner.getDeclaredMethod("normalized", String::class.java).apply { isAccessible = true }
+        assertEquals(normalize.invoke(null, "The Don’s Bride"), normalize.invoke(null, "The Don's Bride"))
+        assertEquals("the dons bride", normalize.invoke(null, "The Don’s Bride"))
+    }
+
+    @Test fun kiss18WebsiteSearchFlagsAndContinuationRetainCompleteFilters() {
+        val supported = setOf("kind", "partial", "unavailable", "category", "tag", "genre")
+        val url = "https://kiss18.vip/search?kind=all&partial=1&unavailable=1&category=Test%20media&tag=CEO%20%26%20Revenge&genre=mafia-romance".toHttpUrl()
+        val filters = kiss18UrlFilterValues(url, supported)
+        assertEquals("all", filters["kind"])
+        assertEquals("1", filters["partial"])
+        assertTrue(kiss18FlagEnabled(filters["partial"]))
+        assertTrue(kiss18FlagEnabled(filters["unavailable"]))
+        assertEquals("Test media", filters["category"])
+        assertEquals("CEO & Revenge", filters["tag"])
+        assertEquals("mafia-romance", filters["genre"])
+        assertFalse(kiss18FlagEnabled("0"))
+        assertFalse(kiss18FlagEnabled("false"))
+
+        val next = kiss18ContinuationUrl("https://kiss18.vip/", 2, 48, "wolf’s bride", filters).toHttpUrl()
+        assertEquals("all", next.queryParameter("kind"))
+        assertEquals("1", next.queryParameter("partial"))
+        assertEquals("1", next.queryParameter("unavailable"))
+        assertEquals("Test media", next.queryParameter("category"))
+        assertEquals("CEO & Revenge", next.queryParameter("tag"))
+        assertEquals("mafia-romance", next.queryParameter("genre"))
+        assertEquals("wolf’s bride", next.queryParameter("q"))
+    }
+
+    @Test fun kiss18AvailabilityMatchesWebsiteCompletenessAndSearchRules() {
+        data class Fixture(val id: String, val listed: List<Int>, val playable: Set<Int>, val finalEpisode: Int? = null) {
+            val status get() = kiss18Availability(listed, playable, finalEpisode)
+        }
+        val fixtures = listOf(
+            Fixture("complete", listOf(1, 2, 3), setOf(1, 2, 3)),
+            Fixture("partial", listOf(1, 2, 3), setOf(1, 2)),
+            Fixture("episode-1-missing", listOf(1, 2, 3), setOf(2, 3)),
+            Fixture("gap", listOf(1, 2, 3, 4), setOf(1, 3, 4)),
+            Fixture("unavailable", listOf(1, 2), emptySet()),
+            Fixture("verified-finale-gap", listOf(1, 2, 3), setOf(1, 2, 3), finalEpisode = 4),
+        )
+        fun result(includePartial: Boolean = false, includeUnavailable: Boolean = false, searching: Boolean = false) =
+            fixtures.filter { kiss18AvailabilityMatches(it.status, includePartial, includeUnavailable, searching) }.map { it.id }.toSet()
+
+        assertEquals(setOf("complete"), result())
+        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap"), result(includePartial = true))
+        assertEquals(setOf("complete", "unavailable"), result(includeUnavailable = true))
+        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap", "unavailable"),
+            result(includePartial = true, includeUnavailable = true))
+        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap"), result(searching = true))
+        assertFalse(kiss18Availability(listOf(1, 2, 3), setOf(1, 2, 3), 4).readyToStart)
+        assertFalse(kiss18Availability(listOf(1, 2, 3, 4), setOf(1, 3, 4), null).readyToStart)
     }
 
     @Test fun kisskhRowsKeepKoreanTitleFieldsWithoutInventingScores() {

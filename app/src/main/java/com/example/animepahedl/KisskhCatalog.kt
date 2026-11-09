@@ -25,19 +25,38 @@ internal class KisskhApi(
         .readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build(),
     private val cookies: ((String) -> String)? = null,
 ) {
+    private val cookieHosts = setOf("kisskh.do", "www.kisskh.do")
+    // OkHttp network interceptors run after route selection. Handle redirects explicitly so a
+    // disallowed Location is rejected before DNS/connect and before any cookie lookup.
+    private val http = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private data class Redirect(val location: String)
+    private data class JsonResult(val value: com.google.gson.JsonElement)
     private val details = linkedMapOf<Long, Pair<Long, JsonObject>>()
     suspend fun json(url: HttpUrl): com.google.gson.JsonElement {
-        require(url.isHttps && url.host == "kisskh.do" && url.encodedPath.startsWith("/api/"))
-        val request = Request.Builder().url(url).header("Referer", "https://kisskh.do/")
-            .header("User-Agent", AnimeNetwork.userAgent).header("Accept", "application/json")
-        cookies?.invoke(url.toString())?.takeIf(String::isNotBlank)?.let { request.header("Cookie", it) }
-        return client.newCall(request.build()).consumeCancellable { response ->
-            if (!response.isSuccessful) throw IOException("KissKH returned ${response.code}. Please try again.")
-            val data = response.body.byteStream().use { it.readNBytes(5_000_001) }
-            require(data.size <= 5_000_000) { "KissKH response is too large." }
-            runCatching { JsonParser.parseString(data.toString(Charsets.UTF_8)) }
-                .getOrElse { throw IOException("KissKH did not return its catalog. Please try again.") }
+        var target = url
+        repeat(11) {
+            require(target.isHttps && target.host in cookieHosts && target.username.isEmpty() && target.password.isEmpty() &&
+                target.encodedPath.startsWith("/api/")) { "URL does not belong to KissKH." }
+            val request = Request.Builder().url(target).header("Referer", "https://kisskh.do/")
+                .header("User-Agent", AnimeNetwork.userAgent).header("Accept", "application/json")
+            cookies?.invoke(target.toString())?.takeIf(String::isNotBlank)?.let { request.header("Cookie", it) }
+            when (val result = http.newCall(request.build()).consumeCancellable { response ->
+                if (response.code in setOf(301, 302, 303, 307, 308)) {
+                    Redirect(response.header("Location") ?: throw IOException("KissKH returned a redirect without a destination."))
+                } else {
+                    if (!response.isSuccessful) throw IOException("KissKH returned ${response.code}. Please try again.")
+                    val data = response.body.byteStream().use { it.readNBytes(5_000_001) }
+                    require(data.size <= 5_000_000) { "KissKH response is too large." }
+                    JsonResult(runCatching { JsonParser.parseString(data.toString(Charsets.UTF_8)) }
+                        .getOrElse { throw IOException("KissKH did not return its catalog. Please try again.") })
+                }
+            }) {
+                is JsonResult -> return result.value
+                is Redirect -> target = target.resolve(result.location)
+                    ?: throw IOException("KissKH returned an invalid redirect destination.")
+            }
         }
+        throw IOException("KissKH returned too many redirects. Please try again.")
     }
     suspend fun list(page: Int, size: Int = 48): JsonObject = json("https://kisskh.do/api/DramaList/List".toHttpUrl().newBuilder()
         .addQueryParameter("page", page.toString()).addQueryParameter("pageSize", size.toString())
@@ -77,12 +96,21 @@ internal class KisskhApi(
             base.toString(), episodes, description = data.dramaString("description"))
     }
     suspend fun subtitles(episodeId: String): List<MediaSubtitle> {
+        val tracks = subtitleDescriptors(episodeId)
+        return localizeSubtitles(tracks)
+    }
+    /** Only localize likely-to-be-used tracks for online playback; downloads can request all. */
+    suspend fun playbackSubtitles(episodeId: String): List<MediaSubtitle> =
+        localizeSubtitles(prioritizedKisskhSubtitles(subtitleDescriptors(episodeId)))
+
+    private suspend fun subtitleDescriptors(episodeId: String): List<MediaSubtitle> {
         val target = "https://kisskh.do/api/Sub/$episodeId".toHttpUrl().newBuilder()
             .addQueryParameter("kkey", kisskhRequestKey(episodeId, "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp")).build()
-        val tracks = parseKisskhSubtitles(json(target).asJsonArray)
-        return bestEffortKisskhSubtitleLocalization(tracks) { ProviderSubtitles.localize(client, it) }
-            .also { runCatching { ProviderSubtitles.trim() } }
+        return parseKisskhSubtitles(json(target).asJsonArray)
     }
+    private suspend fun localizeSubtitles(tracks: List<MediaSubtitle>): List<MediaSubtitle> =
+        bestEffortKisskhSubtitleLocalization(tracks) { ProviderSubtitles.localize(client, it) }
+            .also { runCatching { ProviderSubtitles.trim() } }
     suspend fun variants(url: HttpUrl, includeSubtitles: Boolean = true): List<DramaVariant> {
         val show = series(url) // Also enforces the Korean-only rule for pasted episode links.
         val episodeId = url.queryParameter("ep") ?: show.episodes.first().id
@@ -92,8 +120,8 @@ internal class KisskhApi(
             .addQueryParameter("kkey", kisskhRequestKey(episodeId)).build()
         val body = json(target).asJsonObject
         val media = body.dramaString("Video").takeIf { it.isNotBlank() } ?: body.dramaString("Video_tmp")
-        val parsed = runCatching { media.toHttpUrl() }.getOrNull()
-        require(parsed != null && parsed.isHttps && (isDramaHls(parsed) || isDramaFile(parsed))) {
+        val parsed = kisskhPlayableVideoUrl(media)
+        require(parsed != null) {
             "This KissKH episode has no playable video. Try another episode."
         }
         val captions = if (includeSubtitles) try { subtitles(episodeId) }
@@ -104,13 +132,26 @@ internal class KisskhApi(
     }
 }
 
+internal fun kisskhPlayableVideoUrl(raw: String): HttpUrl? = runCatching { raw.toHttpUrl() }.getOrNull()
+    ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() && (isDramaHls(it) || isDramaFile(it)) }
+
 internal fun parseKisskhSubtitles(items: com.google.gson.JsonArray): List<MediaSubtitle> = items.mapNotNull { element ->
     val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
     val url = runCatching { item.dramaString("src").toHttpUrl() }.getOrNull()
         ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() } ?: return@mapNotNull null
-    MediaSubtitle(url.toString(), item.dramaString("label"), item.dramaString("land").ifBlank { "und" },
+    val mimeType = when (url.encodedPath.substringAfterLast('.', "").lowercase()) {
+        "srt" -> "application/x-subrip"
+        "vtt" -> "text/vtt"
+        "ass", "ssa" -> "text/x-ssa"
+        else -> "text/plain"
+    }
+    MediaSubtitle(url.toString(), item.dramaString("label"), item.dramaString("land").ifBlank { "und" }, mimeType,
         isDefault = item.dramaString("default").equals("true", true))
 }.distinctBy { it.url }.sortedByDescending { it.isDefault }
+
+internal fun prioritizedKisskhSubtitles(tracks: List<MediaSubtitle>): List<MediaSubtitle> =
+    tracks.filter { it.isDefault || it.language.equals("en", true) || it.language.startsWith("en-", true) }
+        .ifEmpty { tracks.take(1) }
 
 /** A broken or unavailable caption must not prevent video playback or discard other tracks. */
 internal suspend fun bestEffortKisskhSubtitleLocalization(

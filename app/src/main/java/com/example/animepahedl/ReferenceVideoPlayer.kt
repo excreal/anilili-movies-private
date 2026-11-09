@@ -203,7 +203,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         val episodeId = current.id
         val resolvingAttempt = attempt
         val tracks = try {
-            withContext(Dispatchers.IO) { KisskhApi(cookies = cookies::headerFor).subtitles(episodeId) }
+            withContext(Dispatchers.IO) { KisskhApi(cookies = cookies::headerFor).playbackSubtitles(episodeId) }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { emptyList() }
         if (tracks.isEmpty()) return@LaunchedEffect

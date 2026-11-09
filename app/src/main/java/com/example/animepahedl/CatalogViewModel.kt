@@ -6,6 +6,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KISS18("Kiss18"), NARTO("Narto Drama"), EROTICMV("EroticMV"), KISSKH("KissKH · K-drama") }
 
@@ -88,7 +91,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
             else -> return
         }
         if (mapped == CatalogSource.KISS18) {
-            if (kind !in setOf("category", "tag") || term.name.isBlank() || term.name.length > 100) return
+            if (kind !in setOf("category", "tag", "genre") || term.name.isBlank() || term.name.length > 100) return
         } else if (!isSafeMetadataFilterRoute(mapped, kind, term.url)) return
         source = mapped; query = ""; activeFilter = kind to term; filterLabel = "${term.name} · ${mapped.label}"; load(false)
     }
@@ -143,18 +146,48 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
 }
 
 internal fun isSafeMetadataFilterRoute(source: CatalogSource, kind: String, raw: String?): Boolean {
-        if (raw == null || kind !in setOf("genre", "category", "tag")) return false
+        if (raw == null || kind !in setOf("genre", "category", "tag", "actor", "director")) return false
         val url = runCatching { raw.toHttpUrl() }.getOrNull() ?: return false
         if (url.scheme != "https" || url.username.isNotEmpty() || url.password.isNotEmpty() || url.querySize > 0 || url.fragment != null) return false
+        if (source == CatalogSource.EROTICMV) return safeEroticMvFilterRoute(kind, raw, url)
         return when (source) {
             CatalogSource.DRAMATIP -> url.host in setOf("dramatip.net", "www.dramatip.net") && kind == "category" && url.encodedPath.matches(Regex("^/(?:[a-z]{2}/)?category/[a-zA-Z0-9_-]+(?:/page/\\d+)?/?$"))
             CatalogSource.NARTO -> url.host in setOf("narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com") &&
                 url.encodedPath.matches(Regex("^/(?:genre|tag|category)/[a-zA-Z0-9_-]+(?:/page/\\d+)?/?$")) &&
                 url.encodedPath.startsWith(if (kind == "genre") "/genre/" else if (kind == "tag") "/tag/" else "/category/")
-            CatalogSource.EROTICMV -> url.host in setOf("eroticmv.com", "www.eroticmv.com") &&
-                url.encodedPath.matches(Regex("^/(?:category/(?:genre|country|decades)|tag)/[a-zA-Z0-9_-]+(?:/page/\\d+)?/?$")) &&
-                (if (kind == "genre") url.encodedPath.startsWith("/category/genre/") else if (kind == "tag") url.encodedPath.startsWith("/tag/") else url.encodedPath.startsWith("/category/"))
+            CatalogSource.EROTICMV -> false
             CatalogSource.KISS18 -> false
             else -> false
         }
+}
+
+private fun safeEroticMvFilterRoute(kind: String, raw: String, url: okhttp3.HttpUrl): Boolean {
+    if (url.host !in setOf("eroticmv.com", "www.eroticmv.com") || url.port != 443) return false
+    val rawPath = runCatching { URI(raw).rawPath }.getOrNull() ?: return false
+    if (rawPath.contains('\\') || Regex("%(?:2f|5c)", RegexOption.IGNORE_CASE).containsMatchIn(rawPath)) return false
+    val encodedSegments = rawPath.split('/').drop(1).toMutableList()
+    if (encodedSegments.lastOrNull().isNullOrEmpty()) encodedSegments.removeAt(encodedSegments.lastIndex)
+    if (encodedSegments.isEmpty() || encodedSegments.any(String::isEmpty)) return false
+    val segments = encodedSegments.map { segment ->
+        runCatching { URLDecoder.decode(segment.replace("+", "%2B"), StandardCharsets.UTF_8) }.getOrNull()
+            ?: return false
+    }
+    if (segments.any { it == "." || it == ".." || '/' in it || '\\' in it }) return false
+    val archive = if (segments.lastOrNull() == "page") return false else segments
+    val normalized = archive.toMutableList()
+    if (normalized.size >= 2 && normalized[normalized.lastIndex - 1] == "page") {
+        if (normalized.last().toIntOrNull()?.let { it > 0 } != true) return false
+        normalized.removeAt(normalized.lastIndex)
+        normalized.removeAt(normalized.lastIndex)
+    }
+    if (normalized.any { it != "category" && it !in setOf("genre", "country", "decades", "tag", "actor", "director") && !it.matches(Regex("[\\p{L}\\p{N}_.~-]+")) }) return false
+    fun slug(value: String?) = value != null && value != "." && value != ".." && value.matches(Regex("[\\p{L}\\p{N}_.~-]+"))
+    return when (kind) {
+        "actor", "director" -> normalized.size == 2 && normalized[0] == kind && slug(normalized[1])
+        "tag" -> normalized.size == 2 && normalized[0] == "tag" && slug(normalized[1])
+        "genre" -> normalized.size == 3 && normalized[0] == "category" && normalized[1] == "genre" && slug(normalized[2])
+        "category" -> (normalized.size == 2 && normalized[0] == "category" && slug(normalized[1])) ||
+            (normalized.size == 3 && normalized[0] == "category" && normalized[1] in setOf("genre", "country", "decades") && slug(normalized[2]))
+        else -> false
+    }
 }
