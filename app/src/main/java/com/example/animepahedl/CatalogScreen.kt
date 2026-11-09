@@ -14,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -79,7 +81,7 @@ internal fun CatalogScreen(
             Text("Sources", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(model.availableSources, key = { it.name }) { source ->
-                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
+                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.heightIn(min = 48.dp).semantics { selected = model.source == source }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, containerColor = if (model.source == source) Color.White.copy(alpha = .12f) else Color.Transparent)) { Text(source.label) }
                 }
             }

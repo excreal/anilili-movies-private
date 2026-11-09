@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import coil.ImageLoader
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +66,27 @@ internal fun friendlyDownloadStatus(status: String): String = when (status) {
 internal fun outputLabel(model: DownloaderViewModel): String = if (model.outputTree.isBlank())
     "Downloads" + model.outputFolder.takeIf { it.isNotEmpty() }?.let { "/$it" }.orEmpty()
     else runCatching { DocumentsContract.getTreeDocumentId((model.outputTree).toUri()).replace(':', '/') }.getOrDefault("Selected folder")
+
+/** Settings detail row follows Anilili's title/description/value/chevron layout. */
+@Composable
+private fun CatalogSourceSettingRow(title: String, description: String, value: String, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = Color.Transparent, shape = RoundedCornerShape(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (value.isNotEmpty()) Text(value, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            AppSymbol(AppIcon.Next, Modifier.size(20.dp), description = null)
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
 
 @Composable
 internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader, onChooseFolder: () -> Unit, onPlay: (DownloadRow) -> Unit, onRemove: (String) -> Unit) {
@@ -371,6 +393,53 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
     val context = LocalContext.current
     val catalogSourcePreferences = remember(context) { CatalogSourcePreferences.also { it.attach(context) } }
     val catalogSourceOrder by catalogSourcePreferences.state.collectAsState()
+    var editEnabledSources by remember { mutableStateOf(false) }
+    var editSourceOrder by remember { mutableStateOf(false) }
+    if (editEnabledSources) AlertDialog(
+        onDismissRequest = { editEnabledSources = false },
+        title = { Text("Sources shown") },
+        text = {
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+                Text("Choose which sources appear on Home and Browse. Keep at least one turned on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp))
+                catalogSourceOrder.order.forEach { source ->
+                    val checked = source in catalogSourceOrder.enabled
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(source.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Checkbox(checked = checked,
+                            enabled = !checked || catalogSourceOrder.enabled.size > 1,
+                            onCheckedChange = { catalogSourcePreferences.setEnabled(source, it) })
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { editEnabledSources = false }) { Text("Done") } },
+    )
+    if (editSourceOrder) AlertDialog(
+        onDismissRequest = { editSourceOrder = false },
+        title = { Text("Source order") },
+        text = {
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+                Text("Move sources to change their order on Home and Browse.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp))
+                catalogSourceOrder.order.forEachIndexed { index, source ->
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(source.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        IconButton(onClick = { catalogSourcePreferences.move(source, -1) }, enabled = index > 0) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${source.label} up")
+                        }
+                        IconButton(onClick = { catalogSourcePreferences.move(source, 1) }, enabled = index < catalogSourceOrder.order.lastIndex) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${source.label} down")
+                        }
+                    }
+                    if (index < catalogSourceOrder.order.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { editSourceOrder = false }) { Text("Done") } },
+    )
     val scope = rememberCoroutineScope()
     val diagnosticPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         val contents = exportingDiagnostic
@@ -432,37 +501,14 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
                 "notifications" -> { item { NotificationPreferences() } }
                 "subtitles" -> { item { ProviderSubtitleSettings() } }
                 "servers" -> {
+                    item { CatalogSourceSettingRow("Enabled sources", "Sources available on Home and Browse", "${catalogSourceOrder.enabled.size} of ${catalogSourceOrder.order.size}") { editEnabledSources = true } }
                     item {
-                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Sources shown on Home and Browse", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text("Reorder the source chips or hide sources you don’t use.",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        val enabledInOrder = catalogSourceOrder.order.filter { it in catalogSourceOrder.enabled }
+                        val summary = enabledInOrder.take(2).joinToString(" · ") { it.label } +
+                            if (enabledInOrder.size > 2) " +${enabledInOrder.size - 2}" else ""
+                        CatalogSourceSettingRow("Source priority", "Order used for the source chips on Home and Browse", summary) { editSourceOrder = true }
                     }
-                    items(catalogSourceOrder.order, key = { it.name }) { source ->
-                        val index = catalogSourceOrder.order.indexOf(source)
-                        val enabled = source in catalogSourceOrder.enabled
-                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(source.label, style = MaterialTheme.typography.titleSmall)
-                                    Text(if (enabled) "Position ${index + 1}" else "Hidden from Home and Browse",
-                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Switch(checked = enabled, onCheckedChange = { catalogSourcePreferences.setEnabled(source, it) })
-                            }
-                            Row {
-                                IconButton(onClick = { catalogSourcePreferences.move(source, -1) }, enabled = index > 0) {
-                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${source.label} up")
-                                }
-                                IconButton(onClick = { catalogSourcePreferences.move(source, 1) }, enabled = index < catalogSourceOrder.order.lastIndex) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${source.label} down")
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
-                    }
-                    item { SettingsRow(AppIcon.Shield, "Browser cookies", "Manage saved verification for video sources") { showSiteCookies = true } }
+                    item { CatalogSourceSettingRow("Browser cookies", "Manage saved verification for video sources", "") { showSiteCookies = true } }
                 }
                 "accounts" -> { item { Text("Saved on this device", style = MaterialTheme.typography.titleMedium) }; item { Text("Your saved shows and viewing progress stay on this device.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                 "appearance" -> {
