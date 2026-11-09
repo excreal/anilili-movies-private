@@ -33,8 +33,7 @@ internal object ProviderSubtitles {
         val hash = MessageDigest.getInstance("SHA-256").digest(track.url.toByteArray()).joinToString("") { "%02x".format(it) }
         val target = File(directory, "$hash.vtt")
         if (!target.isFile || target.length() == 0L) {
-            val request = Request.Builder().url(track.url).header("Referer", "https://kisskh.do/")
-                .header("User-Agent", AnimeNetwork.userAgent).build()
+            val request = providerSubtitleRequest(track)
             val bytes = fetchProviderSubtitleBytes(client, request, track.label)
             val content = normalizeKisskhSubtitles(bytes.toString(Charsets.UTF_8), Uri.parse(track.url).path.orEmpty().substringAfterLast('.'))
             coroutineContext.ensureActive()
@@ -52,6 +51,11 @@ internal object ProviderSubtitles {
         File(context.filesDir, "provider-subtitles").listFiles()?.filter { it.extension == "vtt" }
             ?.filter { Uri.fromFile(it).toString() !in retained }?.sortedByDescending { it.lastModified() }?.drop(64)?.forEach { it.delete() }
     }
+}
+
+/** Subtitle descriptors may point at third-party CDNs, so never attach a provider Referer. */
+internal fun providerSubtitleRequest(track: MediaSubtitle): Request {
+    return Request.Builder().url(track.url).header("User-Agent", AnimeNetwork.userAgent).build()
 }
 
 /** Download a bounded subtitle body while keeping coroutine cancellation connected to OkHttp. */

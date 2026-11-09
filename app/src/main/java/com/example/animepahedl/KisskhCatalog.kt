@@ -79,16 +79,11 @@ internal class KisskhApi(
     suspend fun subtitles(episodeId: String): List<MediaSubtitle> {
         val target = "https://kisskh.do/api/Sub/$episodeId".toHttpUrl().newBuilder()
             .addQueryParameter("kkey", kisskhRequestKey(episodeId, "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp")).build()
-        val tracks = json(target).asJsonArray.mapNotNull { element ->
-            val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-            val url = runCatching { item.dramaString("src").toHttpUrl() }.getOrNull()?.takeIf { it.isHttps } ?: return@mapNotNull null
-            MediaSubtitle(url.toString(), item.dramaString("label"), item.dramaString("land").ifBlank { "und" },
-                isDefault = item.dramaString("default").equals("true", true))
-        }.distinctBy { it.url }.sortedByDescending { it.isDefault }
+        val tracks = parseKisskhSubtitles(json(target).asJsonArray)
         return bestEffortKisskhSubtitleLocalization(tracks) { ProviderSubtitles.localize(client, it) }
             .also { runCatching { ProviderSubtitles.trim() } }
     }
-    suspend fun variants(url: HttpUrl): List<DramaVariant> {
+    suspend fun variants(url: HttpUrl, includeSubtitles: Boolean = true): List<DramaVariant> {
         val show = series(url) // Also enforces the Korean-only rule for pasted episode links.
         val episodeId = url.queryParameter("ep") ?: show.episodes.first().id
         require(show.episodes.any { it.id == episodeId }) { "This episode does not belong to this Korean drama." }
@@ -101,13 +96,21 @@ internal class KisskhApi(
         require(parsed != null && parsed.isHttps && (isDramaHls(parsed) || isDramaFile(parsed))) {
             "This KissKH episode has no playable video. Try another episode."
         }
-        val captions = try { subtitles(episodeId) }
+        val captions = if (includeSubtitles) try { subtitles(episodeId) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { emptyList() }
+            catch (_: Exception) { emptyList() } else emptyList()
         return listOf(DramaVariant(media, subtitles = captions, headers = mapOf("Referer" to "https://kisskh.do/"),
             mimeType = if (isDramaHls(parsed)) "application/x-mpegURL" else "video/mp4"))
     }
 }
+
+internal fun parseKisskhSubtitles(items: com.google.gson.JsonArray): List<MediaSubtitle> = items.mapNotNull { element ->
+    val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+    val url = runCatching { item.dramaString("src").toHttpUrl() }.getOrNull()
+        ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() } ?: return@mapNotNull null
+    MediaSubtitle(url.toString(), item.dramaString("label"), item.dramaString("land").ifBlank { "und" },
+        isDefault = item.dramaString("default").equals("true", true))
+}.distinctBy { it.url }.sortedByDescending { it.isDefault }
 
 /** A broken or unavailable caption must not prevent video playback or discard other tracks. */
 internal suspend fun bestEffortKisskhSubtitleLocalization(

@@ -172,25 +172,14 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                     ReferenceResolved(current, listOf(StreamItem(current.url, "mp4", matchingRecord?.quality,
                         matchingRecord?.audio, null, true, null, null)), tracks, true, true)
                 } else if (localRecord != null && current.id !in onlineOnly) {
-                    var tracks = localRecord.media?.subtitles.orEmpty()
-                    if (series.provider == SiteDownloadProvider.KISSKH && tracks.isEmpty()) {
-                        // Upgrade an older saved file without fetching its video again.
-                        tracks = try { KisskhApi(cookies = cookies::headerFor).subtitles(current.id) }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { emptyList() }
-                        if (tracks.isNotEmpty()) {
-                            val entry = DownloadStore.all().entries.firstOrNull { it.value.uri == localRecord.uri }
-                            if (entry != null) DownloadStore.put(entry.key, localRecord.copy(media =
-                                (localRecord.media ?: ResolvedMedia(localRecord.uri, localRecord.quality ?: "Original", "und")).copy(subtitles = tracks)))
-                        }
-                    }
+                    val tracks = localRecord.media?.subtitles.orEmpty()
                     ReferenceResolved(current, listOf(StreamItem(localRecord.uri, "mp4", localRecord.quality, localRecord.audio,
                         null, true, null, null)), tracks.filter { track ->
                         if (!track.url.startsWith("file:")) true else java.io.File(track.url.toUri().path.orEmpty()).isFile
                     }, true, true)
                 } else {
                     check(!localOnlySeries) { "This saved video is missing. Relink it in Downloads." }
-                    val options = repository.resolveChoices(current.url, cookies.headerFor(current.url)).map(cookies::applyTo)
+                    val options = repository.resolveChoices(current.url, cookies.headerFor(current.url), includeSubtitles = false).map(cookies::applyTo)
                     check(options.isNotEmpty()) { "This episode has no playable video." }
                     val streams = options.map { media ->
                         val height = media.quality.removeSuffix("p").toIntOrNull()
@@ -210,6 +199,29 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         catch (error: Exception) { failure = error.toFailure(AnililiError.SOURCE_RESOLVE_FAILED) }
     }
     val result = loaded?.takeIf { it.episode.id == current.id }
+    LaunchedEffect(current.id, attempt, result?.episode?.id) {
+        val ready = result ?: return@LaunchedEffect
+        if (series.provider != SiteDownloadProvider.KISSKH || ready.subtitles.isNotEmpty()) return@LaunchedEffect
+        val episodeId = current.id
+        val resolvingAttempt = attempt
+        val tracks = try {
+            withContext(Dispatchers.IO) { KisskhApi(cookies = cookies::headerFor).subtitles(episodeId) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { emptyList() }
+        if (tracks.isEmpty()) return@LaunchedEffect
+        val latest = loaded
+        if (series.episodes.getOrNull(index)?.id != episodeId || attempt != resolvingAttempt || latest?.episode?.id != episodeId) return@LaunchedEffect
+        loaded = latest.copy(subtitles = tracks)
+        if (ready.local) withContext(Dispatchers.IO) {
+            val rows = DownloadStore.all()
+            val entry = rows.entries.firstOrNull { it.value.uri == ready.streams.firstOrNull()?.url }
+            if (entry != null) {
+                val record = entry.value
+                DownloadStore.put(entry.key, record.copy(media =
+                    (record.media ?: ResolvedMedia(record.uri, record.quality ?: "Original", "und")).copy(subtitles = tracks)))
+            }
+        }
+    }
     DisposableEffect(result?.subtitles) {
         val tracks = result?.subtitles.orEmpty(); ProviderSubtitles.hold(tracks)
         onDispose { ProviderSubtitles.release(tracks) }

@@ -73,10 +73,10 @@ internal class SiteDownloadRepository(
         ResolvedMedia(chosen.url, chosen.quality, "und", headers, chosen.backupUrls, chosen.mimeType, chosen.subtitles)
     }
 
-    suspend fun resolveChoices(locator: String, cookie: String = ""): List<ResolvedMedia> = withContext(Dispatchers.IO) {
+    suspend fun resolveChoices(locator: String, cookie: String = "", includeSubtitles: Boolean = true): List<ResolvedMedia> = withContext(Dispatchers.IO) {
         val input = siteDownloadInput(locator)
         val provider = siteDownloadProvider(input)
-        episodeVariants(input, provider, cookie).distinctBy { it.url }.map { variant ->
+        episodeVariants(input, provider, cookie, includeSubtitles).distinctBy { it.url }.map { variant ->
             val headers = linkedMapOf("User-Agent" to userAgent)
             if (provider != SiteDownloadProvider.DIRECT) headers["Referer"] = input.toString()
             val mediaUrl = variant.url.toHttpUrl()
@@ -89,8 +89,9 @@ internal class SiteDownloadRepository(
     private fun variantQualities(variants: List<DramaVariant>): List<String> = listOf("Best") + variants.map { it.quality }.distinct()
         .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
 
-    private suspend fun episodeVariants(url: HttpUrl, provider: SiteDownloadProvider, cookie: String): List<DramaVariant> = when (provider) {
-        SiteDownloadProvider.KISSKH -> kisskh.variants(url.newBuilder().host("kisskh.do").build())
+    private suspend fun episodeVariants(url: HttpUrl, provider: SiteDownloadProvider, cookie: String,
+        includeSubtitles: Boolean = true): List<DramaVariant> = when (provider) {
+        SiteDownloadProvider.KISSKH -> kisskh.variants(url.newBuilder().host("kisskh.do").build(), includeSubtitles)
         SiteDownloadProvider.DIRECT -> listOf(DramaVariant(decodeEroticMedia(url.toString()), mimeType = if (isDramaHls(url)) "application/x-mpegURL" else if (url.encodedPath.endsWith(".webm", true) || url.queryParameter("mime_type") == "video/webm") "video/webm" else "video/mp4"))
         SiteDownloadProvider.DRAMATIP -> {
             val (slug, number) = dramaRoute(url, provider)
