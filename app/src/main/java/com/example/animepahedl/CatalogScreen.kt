@@ -35,7 +35,6 @@ internal fun CatalogScreen(
     onDownloads: () -> Unit = {},
 ) {
     var filters by remember { mutableStateOf(false) }
-    var categories by remember { mutableStateOf(true) }
     val grid = rememberLazyGridState()
     val phoneCardWidth = ((LocalConfiguration.current.screenWidthDp - 62) / 3.35f).coerceIn(108f, 150f).dp
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
@@ -68,9 +67,6 @@ internal fun CatalogScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Browse", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge.copy(fontSize = 32.sp), fontWeight = FontWeight.Black)
                     TextButton(onClick = model::reset) { Text("Reset") }
-                    IconButton(onClick = { categories = !categories }) {
-                        AppSymbol(AppIcon.Expand, description = if (categories) "Hide source shortcuts" else "Show source shortcuts")
-                    }
                 }
                 Text("Find your next movie or show", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
@@ -89,7 +85,7 @@ internal fun CatalogScreen(
                 }
             }
         }
-        if (browseMode && categories) item(span = { GridItemSpan(maxLineSpan) }, contentType = "source-shortcuts") {
+        if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "source-shortcuts") {
             Column(Modifier.fillMaxWidth()) {
             Text("Sources", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

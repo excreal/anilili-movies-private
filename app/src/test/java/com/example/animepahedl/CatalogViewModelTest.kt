@@ -23,10 +23,15 @@ class CatalogViewModelTest {
         val oldCache = CatalogPage(listOf(CatalogItem("True Beauty", "https://kisskh.do/Drama/True-Beauty?id=1", "banner")))
 
         val kisskh = catalogPageForSource(CatalogSource.KISSKH, oldCache)
-        val dramatip = catalogPageForSource(CatalogSource.DRAMATIP, oldCache)
+        val erotic = catalogPageForSource(CatalogSource.EROTICMV, oldCache)
 
         assertTrue(kisskh.items.single().wideArtwork)
-        assertFalse(dramatip.items.single().wideArtwork)
+        assertFalse(erotic.items.single().wideArtwork)
+    }
+
+    @Test fun movieCatalogContainsOnlyMovieAndKisskhSources() {
+        assertEquals(setOf(CatalogSource.KISSKH, CatalogSource.EROTICMV), MovieCatalogConfig.sources.toSet())
+        assertEquals(MovieCatalogConfig.sources.toSet(), CatalogSource.entries.toSet())
     }
 
     @Test fun failedRefreshRetainsResultsAndContinuationForSameQueryAndSource() {

@@ -12,7 +12,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KISS18("Kiss18"), NARTO("Narto Drama"), EROTICMV("Erotic Movies"), KISSKH("KissKH · K-drama") }
+internal enum class CatalogSource(val label: String) { EROTICMV("Erotic Movies"), KISSKH("KissKH · K-drama") }
 
 /** The movie edition shares the player and download engine, while presenting movie/show sources only. */
 internal object MovieCatalogConfig {
@@ -144,10 +144,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
             cacheDir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(30)?.forEach { it.delete() }
         } }
     }
-    private val adapters by lazy { CatalogSource.entries.associateWith { source -> when(source) {
-        CatalogSource.DRAMATIP -> DramatipCatalog(cookieHeader = cookies::headerFor)
-        CatalogSource.KISS18 -> Kiss18Catalog()
-        CatalogSource.NARTO -> NartoCatalog(cookieHeader = cookies::headerFor)
+    private val adapters by lazy { MovieCatalogConfig.sources.associateWith { source -> when(source) {
         CatalogSource.EROTICMV -> EroticMvCatalog(cookieHeader = cookies::headerFor)
         CatalogSource.KISSKH -> KisskhCatalog(application.cacheDir, cookies::headerFor)
     } } }
@@ -172,15 +169,10 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     fun edit(value: String) { activeFilter = null; filterLabel = null; query = value; load(false, 400) }
     fun explore(provider: SiteDownloadProvider, kind: String, term: SiteShowTerm) {
         val mapped = when (provider) {
-            SiteDownloadProvider.DRAMATIP -> CatalogSource.DRAMATIP
-            SiteDownloadProvider.KISS18 -> CatalogSource.KISS18
-            SiteDownloadProvider.NARTO -> CatalogSource.NARTO
             SiteDownloadProvider.EROTICMV -> CatalogSource.EROTICMV
             else -> return
         }
-        if (mapped == CatalogSource.KISS18) {
-            if (kind !in setOf("category", "tag", "genre") || term.name.isBlank() || term.name.length > 100) return
-        } else if (!isSafeMetadataFilterRoute(mapped, kind, term.url)) return
+        if (!isSafeMetadataFilterRoute(mapped, kind, term.url)) return
         source = mapped; query = ""; activeFilter = kind to term; filterLabel = "${term.name} · ${mapped.label}"; load(false)
     }
     fun reset() { activeFilter = null; filterLabel = null; query = ""; load(false) }
@@ -249,15 +241,7 @@ internal fun isSafeMetadataFilterRoute(source: CatalogSource, kind: String, raw:
         val url = runCatching { raw.toHttpUrl() }.getOrNull() ?: return false
         if (url.scheme != "https" || url.username.isNotEmpty() || url.password.isNotEmpty() || url.querySize > 0 || url.fragment != null) return false
         if (source == CatalogSource.EROTICMV) return safeEroticMvFilterRoute(kind, raw, url)
-        return when (source) {
-            CatalogSource.DRAMATIP -> url.host in setOf("dramatip.net", "www.dramatip.net") && kind == "category" && url.encodedPath.matches(Regex("^/(?:[a-z]{2}/)?category/[a-zA-Z0-9_-]+(?:/page/\\d+)?/?$"))
-            CatalogSource.NARTO -> url.host in setOf("narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com") &&
-                url.encodedPath.matches(Regex("^/(?:genre|tag|category)/[a-zA-Z0-9_-]+(?:/page/\\d+)?/?$")) &&
-                url.encodedPath.startsWith(if (kind == "genre") "/genre/" else if (kind == "tag") "/tag/" else "/category/")
-            CatalogSource.EROTICMV -> false
-            CatalogSource.KISS18 -> false
-            else -> false
-        }
+        return false
 }
 
 private fun safeEroticMvFilterRoute(kind: String, raw: String, url: okhttp3.HttpUrl): Boolean {

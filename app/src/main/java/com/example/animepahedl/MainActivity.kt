@@ -308,11 +308,8 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                     onRemoveFromContinueWatching = { series -> history.removeFromContinueWatching(series); historyRevision++ },
                     onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ })
                 !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { item -> siteDownload.updateInput(item.url); siteDownload.inspect(item.poster, item.title); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching.filter { series ->
-                    when (catalog.source) {
-                        CatalogSource.KISSKH -> series.provider == SiteDownloadProvider.KISSKH
-                        CatalogSource.EROTICMV -> series.provider == SiteDownloadProvider.EROTICMV
-                        else -> false
-                    }
+                    (catalog.source == CatalogSource.KISSKH && series.provider == SiteDownloadProvider.KISSKH) ||
+                        (catalog.source == CatalogSource.EROTICMV && series.provider == SiteDownloadProvider.EROTICMV)
                 }, images, onOpen = { series -> remoteEpisode = null; playingRemote = series }, onRemove = { series -> history.removeFromContinueWatching(series); historyRevision++ }, onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ }) }, backdrop = chromeBackdrop, onDownloads = { model.showDownloads = true })
                 else -> screenState.SaveableStateProvider("sites") {
                     SiteDownloadScreen(siteDownload, model, images,

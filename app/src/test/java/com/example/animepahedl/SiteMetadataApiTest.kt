@@ -212,23 +212,10 @@ class SiteMetadataApiTest {
         assertEquals("https://eroticmv.com/category/genre/drama/", newer.genreTerms.single().url)
     }
 
-    @Test fun nartoLinkedTaxonomyTermsAreClassifiedByTheirRealRoutes() {
-        val groups = classifyNartoLinkedTerms(listOf(
-            MetadataTerm("Romance", url = "https://edge.narto-drama.com/genre/romance/"),
-            MetadataTerm("Trending", url = "https://edge.narto-drama.com/category/trending/"),
-            MetadataTerm("CEO", url = "https://edge.narto-drama.com/tag/ceo/")
-        ))
-        assertEquals(listOf("Romance"), groups.genres.map { it.name })
-        assertEquals(listOf("Trending"), groups.categories.map { it.name })
-        assertEquals(listOf("CEO"), groups.tags.map { it.name })
-    }
-
     @Test fun similarTitleRoutesStayOnProviderTaxonomyPaths() {
         assertTrue(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "genre", "https://eroticmv.com/category/genre/romance/"))
-        assertTrue(isSafeMetadataFilterRoute(CatalogSource.NARTO, "tag", "https://edge.narto-drama.com/tag/ceo/"))
-        assertFalse(isSafeMetadataFilterRoute(CatalogSource.NARTO, "tag", "https://example.com/tag/ceo/"))
         assertFalse(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "tag", "https://eroticmv.com/?redirect=https://example.com"))
-        assertFalse(isSafeMetadataFilterRoute(CatalogSource.DRAMATIP, "category", "http://dramatip.net/category/action/"))
+        assertFalse(isSafeMetadataFilterRoute(CatalogSource.KISSKH, "category", "https://dramatip.net/category/action/"))
     }
 
     @Test fun durationParserHandlesClockAndIsoValues() {
