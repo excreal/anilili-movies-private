@@ -24,8 +24,14 @@ import dev.chrisbanes.haze.HazeState
 
 /** HomeTopChrome + GenrePill geometry from Anilili; provider selection is the data adapter. */
 @Composable
-internal fun ReferenceHomeChrome(model: CatalogViewModel, backdrop: HazeState?, onLink: () -> Unit, onDownloads: () -> Unit) {
-    Column(Modifier.fillMaxWidth().chromeFade(overHero = true, backdrop = backdrop)) {
+internal fun ReferenceHomeChrome(
+    model: CatalogViewModel,
+    backdrop: HazeState?,
+    onLink: () -> Unit,
+    onDownloads: () -> Unit,
+    overHero: Boolean = true,
+) {
+    Column(Modifier.fillMaxWidth().chromeFade(overHero = overHero, backdrop = backdrop)) {
         TopAppBar(title = { androidx.compose.foundation.Image(painterResource(R.drawable.anilili_header_wordmark), "Home", Modifier.height(22.dp)) },
             actions = {
                 IconButton(onClick = onDownloads) { AppSymbol(AppIcon.Download, description = "Downloads") }

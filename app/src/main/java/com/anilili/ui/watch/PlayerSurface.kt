@@ -1430,6 +1430,17 @@ fun PlayerSurface(
         tvControlsVisible = false
         phoneControlsVisible = false
     }
+    // PiP changes the native PlayerView's measured bounds without replacing its controller.
+    // Reapply the selected fit policy and the decoder's current ratio after that frame so the
+    // fullscreen view and PiP use the same uncropped geometry on both entry and return.
+    LaunchedEffect(inPictureInPicture, effectiveContentScale, contentAspectRatio) {
+        androidx.compose.runtime.withFrameNanos { }
+        playerView?.let { view ->
+            view.resizeMode = playerResizeMode(effectiveContentScale)
+            view.applyContentAspectRatio(contentAspectRatio)
+            view.requestLayout()
+        }
+    }
     CompiledSeparately {
     LaunchedEffect(phoneControlsVisible, phoneControlsInteraction, playbackIsPlaying, device.isTv) {
         if (device.isTv || !phoneControlsVisible || !playbackIsPlaying) return@LaunchedEffect

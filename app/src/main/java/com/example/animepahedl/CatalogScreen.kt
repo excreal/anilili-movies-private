@@ -36,7 +36,6 @@ internal fun CatalogScreen(
 ) {
     var filters by remember { mutableStateOf(false) }
     var categories by remember { mutableStateOf(true) }
-    val heroBackdrop = remember { dev.chrisbanes.haze.HazeState() }
     val grid = rememberLazyGridState()
     val phoneCardWidth = ((LocalConfiguration.current.screenWidthDp - 62) / 3.35f).coerceIn(108f, 150f).dp
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
@@ -51,10 +50,10 @@ internal fun CatalogScreen(
         contentPadding = PaddingValues(bottom = 108.dp), horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalArrangement = Arrangement.spacedBy(if (browseMode) 12.dp else 0.dp)) {
         if (!browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "home-hero") {
-            Box(Modifier.fillMaxWidth()) {
-                if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, backdrop = heroBackdrop)
-                else Spacer(Modifier.height(100.dp))
-                ReferenceHomeChrome(model, heroBackdrop, onLink, onDownloads)
+            Column(Modifier.fillMaxWidth()) {
+                ReferenceHomeChrome(model, backdrop = null, onLink = onLink, onDownloads = onDownloads, overHero = false)
+                if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, height = 300.dp)
+                else Spacer(Modifier.height(300.dp))
             }
         }
         if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "browse-controls") {

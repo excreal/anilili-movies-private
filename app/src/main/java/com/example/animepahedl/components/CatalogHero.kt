@@ -32,7 +32,13 @@ import kotlinx.coroutines.delay
 
 /** Anilili's phone HeroPager/HeroCard: full-bleed cover, canvas fade and centered title. */
 @Composable
-internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: (String) -> Unit, backdrop: dev.chrisbanes.haze.HazeState? = null) {
+internal fun CatalogHero(
+    items: List<CatalogItem>,
+    images: ImageLoader,
+    onOpen: (String) -> Unit,
+    backdrop: dev.chrisbanes.haze.HazeState? = null,
+    height: androidx.compose.ui.unit.Dp = 490.dp,
+) {
     val featured = items.distinctBy { it.url }.take(6)
     if (featured.isEmpty()) return
     val pager = rememberPagerState(pageCount = { featured.size })
@@ -44,12 +50,12 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
             pager.animateScrollToPage((pager.settledPage + 1) % featured.size)
         }
     }
-    Box(Modifier.fillMaxWidth().height(490.dp).clipToBounds().then(if (backdrop != null) Modifier.hazeSource(backdrop) else Modifier)) {
-        HorizontalPager(pager, modifier = Modifier.fillMaxSize(), key = { featured[it].url }) { index ->
+    Box(Modifier.fillMaxWidth().height(height).clipToBounds().then(if (backdrop != null) Modifier.hazeSource(backdrop) else Modifier)) {
+        HorizontalPager(pager, modifier = Modifier.fillMaxSize().clipToBounds(), key = { featured[it].url }) { index ->
             val item = featured[index]
             val context = LocalContext.current
             val artwork = remember(context, item.poster, item.url) { catalogArtworkRequest(context, item) }
-            Box(Modifier.fillMaxSize().clickable(onClickLabel = "Open ${item.title}") { onOpen(item.url) }) {
+            Box(Modifier.fillMaxSize().clipToBounds().clickable(onClickLabel = "Open ${item.title}") { onOpen(item.url) }) {
                 AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
                     contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                         .graphicsLayer { scaleX = 1.18f; scaleY = 1.18f }.blur(26.dp).alpha(.5f))
@@ -57,16 +63,16 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
                 // in the center while the blurred artwork supplies a quiet, full-bleed backdrop.
                 AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
                     contentScale = ContentScale.Fit, alignment = Alignment.Center,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.Center))
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.TopCenter))
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = .30f), .42f to Color.Black.copy(alpha = .12f),
                     .72f to Color.Black.copy(alpha = .45f), 1f to canvas,
                 )))
                 // Fade each slide into the page background so artwork never ends at a hard edge.
-                Box(Modifier.fillMaxWidth().height(132.dp).align(Alignment.TopCenter).background(
+                Box(Modifier.fillMaxWidth().height(48.dp).align(Alignment.TopCenter).background(
                     Brush.verticalGradient(0f to canvas, 1f to Color.Transparent),
                 ))
-                Box(Modifier.fillMaxWidth().height(176.dp).align(Alignment.BottomCenter).background(
+                Box(Modifier.fillMaxWidth().height(112.dp).align(Alignment.BottomCenter).background(
                     Brush.verticalGradient(0f to Color.Transparent, .48f to canvas.copy(alpha = .55f), 1f to canvas),
                 ))
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 42.dp),
