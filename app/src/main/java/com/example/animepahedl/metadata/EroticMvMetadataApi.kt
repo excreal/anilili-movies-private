@@ -105,25 +105,35 @@ internal fun parseEroticMvMetadataDetails(html: String, url: String): MetadataDe
     require(safeEroticInputUrl(url)) { "EroticMV detail URL must use a safe HTTPS source host." }
     val doc = Jsoup.parse(html, url)
     val base = metadataFromDocument(doc)
+    val baseMatchesPage = runCatching {
+        base.url.toHttpUrl().encodedPath.trimEnd('/') == url.toHttpUrl().encodedPath.trimEnd('/')
+    }.getOrDefault(false)
     val main = doc.selectFirst("main, #primary") ?: doc.body()
-    val movieArticle = main.select("article.post-item").firstOrNull { it.selectFirst(".entry-content, .post-content, .video-description") != null }
-        ?: main.selectFirst("article.post-item")
+    val movieArticle = main.select("article.post-item, article[id^=post-]").firstOrNull {
+        it.selectFirst(".entry-content, .post-content, .video-description, [itemprop=description]") != null ||
+            it.selectFirst("h1.entry-title, h1.post-title, h1") != null
+    } ?: main.selectFirst("article.post-item, article[id^=post-]")
     val primary = movieArticle ?: main
     val title = main.selectFirst("h1.entry-title, h1.post-title, h1")?.text().orEmpty().ifBlank { base.title.removePrefix("Watch ").removeSuffix(" - Erotic Movies") }
     val id = main.selectFirst("[id^=post-]")?.id()?.removePrefix("post-")
         ?: doc.selectFirst("[data-rater-postid]")?.attr("data-rater-postid") ?: base.id
-    val body = primary.selectFirst(".entry-content, .post-content, .video-description, [itemprop=description]")
+    val body = primary.selectFirst(".entry-content, .post-content, .video-description, [itemprop=description], .video-content, .detail-content")
     val rawBodyText = body?.text().orEmpty()
     val aliases = Regex("(?i)\\b(?:also\\s+known\\s+as|aka)\\b\\s*:?\\s*(.+?)(?=\\bdescription\\s*:|$)")
         .find(rawBodyText)?.groupValues?.get(1)?.split(Regex("\\s*,\\s*|\\s*;\\s*"))?.map(String::trim)
         ?.filter { it.isNotBlank() && it.length < 100 }.orEmpty()
     val description = body?.clone()?.apply {
         select("script,style,[class*=yasr],.star-rating,.rating,.ratings,form,.advertisement").remove()
-    }?.select("p,li")?.map { cleanEroticDescription(it.text()) }
+    }?.let { content ->
+        val paragraphs = content.select("p,li").map { cleanEroticDescription(it.text()) }
+            .filter { it.isNotBlank() && !it.startsWith("The post ", true) && !Regex("(?i)^(Original title|AKA|Language|Country|Year|Runtime|Duration|Released|Studio|Production)\\s*[:：]").containsMatchIn(it) }
+        paragraphs.ifEmpty { listOf(cleanEroticDescription(content.text())) }
+    }
         ?.filter { it.isNotBlank() && !it.startsWith("The post ", true) && !Regex("(?i)^(Original title|AKA|Language|Country|Year|Runtime|Duration|Released|Studio|Production)\\s*[:：]").containsMatchIn(it) }
         ?.distinct()?.joinToString("\n")?.takeIf(String::isNotBlank)
-    val categories = primary.select(".categories-wrap a[href], .cat-links a[href], a.category-item[href]").mapNotNull(::eroticTerm).distinctBy { it.url }
-    val tags = primary.select(".tags-links a[href], a[rel=tag][href]").mapNotNull(::eroticTerm).distinctBy { it.url }
+    val categories = primary.select(".categories-wrap a[href], .cat-links a[href], a.category-item[href], a[href*=/category/]").mapNotNull(::eroticTerm).distinctBy { it.url }
+    val tags = (primary.select(".tags-links a[href], .post-tags a[href], a[rel=tag][href], a[href*=/tag/]").mapNotNull(::eroticTerm) +
+        base.tags.takeIf { baseMatchesPage }.orEmpty().map { MetadataTerm(it.name, it.id, it.url) }).distinctBy { it.url ?: it.name }
     val people = primary.select("a[href*=/actor/], a[href*=/director/]").mapNotNull { link ->
         val target = eroticSiteUrl(link.absUrl("href")) ?: return@mapNotNull null
         val name = link.selectFirst("h6, h5, .entry-title")?.text().orEmpty().ifBlank { link.text() }.trim()
@@ -155,7 +165,8 @@ internal fun parseEroticMvMetadataDetails(html: String, url: String): MetadataDe
     val payloads = base.payloads + listOf(metadataPayload("public-player", url, player),
         metadataPayload("visible-facts", url, com.google.gson.Gson().toJsonTree(attributes)))
     val ratings = eroticRatings(primary).distinct()
-    val record = base.copy(id = id, url = url, title = title, description = description, images = images,
+    val record = base.copy(id = id, url = url, title = title,
+        description = description ?: base.description.takeIf { baseMatchesPage }, images = images,
         alternativeTitles = (aliases + listOfNotNull(attributes["aka"], attributes["originalTitle"])).distinct(),
         categories = categories, genres = categories.filter { it.url?.contains("/category/genre/") == true }, tags = tags, episodeCount = null,
         countries = (categories.filter { it.url?.contains("/category/country/") == true }.map { it.name } + listOfNotNull(attributes["country"])).distinct(),

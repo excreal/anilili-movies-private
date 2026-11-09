@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 @Composable
 internal fun CatalogScreen(
     model: CatalogViewModel, images: ImageLoader, browseMode: Boolean = false,
-    onExpand: () -> Unit = {}, onOpen: (String) -> Unit, onLink: () -> Unit,
+    onExpand: () -> Unit = {}, onOpen: (CatalogItem) -> Unit, onLink: () -> Unit,
     continueWatching: (@Composable () -> Unit)? = null,
     backdrop: dev.chrisbanes.haze.HazeState? = null,
     onDownloads: () -> Unit = {},
@@ -39,7 +39,11 @@ internal fun CatalogScreen(
     val grid = rememberLazyGridState()
     val phoneCardWidth = ((LocalConfiguration.current.screenWidthDp - 62) / 3.35f).coerceIn(108f, 150f).dp
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
-    val columns = if (LocalConfiguration.current.screenWidthDp >= 600) 4 else 2
+    val columns = when {
+        LocalConfiguration.current.screenWidthDp >= 600 -> 4
+        model.source == CatalogSource.EROTICMV -> 3
+        else -> 2
+    }
     val searchSourceName = if (model.source == CatalogSource.KISSKH) "KissKH" else model.source.label
     LaunchedEffect(grid, model.items.size, model.loading, browseMode) {
         snapshotFlow { browseMode && model.items.isNotEmpty() && !model.loading && model.nextUrl != null &&
@@ -53,7 +57,8 @@ internal fun CatalogScreen(
             Column(Modifier.fillMaxWidth()) {
                 ReferenceHomeChrome(model, backdrop = null, onLink = onLink, onDownloads = onDownloads, overHero = false)
                 if (model.source != CatalogSource.EROTICMV) {
-                    if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, height = 300.dp)
+                    if (model.items.isNotEmpty()) CatalogHero(model.items, images,
+                        onOpen = { url -> model.items.firstOrNull { it.url == url }?.let(onOpen) }, height = 300.dp)
                     else Spacer(Modifier.height(300.dp))
                 }
             }
@@ -134,7 +139,7 @@ internal fun CatalogScreen(
             }
         }
         if (browseMode) items(model.items, key = { it.url }, contentType = { "catalog-poster" }) { entry ->
-            CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.padding(horizontal = 5.dp))
+            CatalogPosterCard(entry, images, { onOpen(entry) }, Modifier.padding(horizontal = 5.dp))
         }
         if (model.loading) item(span = { GridItemSpan(maxLineSpan) }, contentType = "loading-indicator") {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { WaterFillLogoIndicator(size = 64.dp) }

@@ -133,8 +133,8 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
             DownloadStore.awaitReady()
             val result = withContext(Dispatchers.IO) {
                 val records = DownloadStore.all()
-                val savedRow = offlineRows?.firstOrNull { it.id == current.id }
-                val localRecord = if (offlineRows != null) records[current.id] else records.values.firstOrNull { record ->
+                val savedRow = offlineRows?.firstOrNull { it.id == current.id || it.episodeId == current.id }
+                val localRecord = if (offlineRows != null) savedRow?.let { records[it.id] } else records.values.firstOrNull { record ->
                     val identity = record.identity
                     identity?.isSiteDownload == true && record.uri.isNotBlank() &&
                         identity.anime.session == "sites:${series.provider}:${series.id}" && identity.episode.session == current.id &&

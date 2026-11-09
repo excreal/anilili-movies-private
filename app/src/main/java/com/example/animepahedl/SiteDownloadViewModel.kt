@@ -109,7 +109,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         error = null
     }
 
-    fun inspect() {
+    fun inspect(posterThumbnailOverride: String? = null) {
         if (input.isBlank()) return
         val request = input.trim()
         val current = ++generation
@@ -125,7 +125,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
                 val result = repository.inspect(request, cookies.headerFor(request))
                 ensureActive()
                 if (generation == current) {
-                    series = result
+                    series = result.copy(posterThumbnailOverride = posterThumbnailOverride?.takeIf(String::isNotBlank))
                     if (result.provider != SiteDownloadProvider.DIRECT) metadataJob = viewModelScope.launch {
                         try {
                             val metadata = metadataApis.forProvider(result.provider).details(request).toAppMetadata()

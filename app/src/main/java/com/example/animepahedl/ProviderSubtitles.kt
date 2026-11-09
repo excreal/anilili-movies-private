@@ -27,7 +27,23 @@ internal object ProviderSubtitles {
     private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     fun init(context: Context) { this.context = context.applicationContext }
     fun hold(tracks: List<MediaSubtitle>) { active.addAll(tracks.map { it.url }) }
-    fun release(tracks: List<MediaSubtitle>) { active.removeAll(tracks.map { it.url }.toSet()) }
+    fun release(tracks: List<MediaSubtitle>) {
+        active.removeAll(tracks.map { it.url }.toSet())
+        deleteUnreferenced("", tracks)
+    }
+    /** Remove app-local subtitle copies when their last downloaded-video reference is deleted. */
+    fun deleteUnreferenced(downloadId: String, tracks: List<MediaSubtitle>) {
+        if (!::context.isInitialized || tracks.isEmpty()) return
+        val retained = DownloadStore.all().filterKeys { it != downloadId }.values
+            .flatMap { it.media?.subtitles.orEmpty() }.map { it.url }.toSet() + active
+        val directory = File(context.filesDir, "provider-subtitles").canonicalFile
+        tracks.forEach { track ->
+            val uri = Uri.parse(track.url)
+            if (uri.scheme != "file" || track.url in retained) return@forEach
+            val file = File(uri.path.orEmpty()).canonicalFile
+            if (file.parentFile == directory && file.extension == "vtt") file.delete()
+        }
+    }
     suspend fun localize(client: OkHttpClient, track: MediaSubtitle): MediaSubtitle = withContext(Dispatchers.IO) {
         val directory = File(context.filesDir, "provider-subtitles").apply { mkdirs() }
         val hash = MessageDigest.getInstance("SHA-256").digest(track.url.toByteArray()).joinToString("") { "%02x".format(it) }

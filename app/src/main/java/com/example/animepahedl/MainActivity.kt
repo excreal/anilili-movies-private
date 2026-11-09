@@ -303,11 +303,17 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                     playingSaved = row
                 }, onRemove = { removeId = it }) }
                 showHistory -> LibraryScreen(savedShows, continueWatching, images,
-                    onDetails = { series -> showHistory = false; siteDownload.updateInput(series.url); siteDownload.inspect(); showLinkDetails = true },
+                    onDetails = { series -> showHistory = false; siteDownload.updateInput(series.url); siteDownload.inspect(series.posterThumbnail()); showLinkDetails = true },
                     onResume = { series -> remoteEpisode = null; playingRemote = series },
                     onRemoveFromContinueWatching = { series -> history.removeFromContinueWatching(series); historyRevision++ },
                     onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ })
-                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { url -> siteDownload.updateInput(url); siteDownload.inspect(); showLinkDetails = true }, onLink = { siteDownload.updateInput(""); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching, images, onOpen = { series -> remoteEpisode = null; playingRemote = series }, onRemove = { series -> history.removeFromContinueWatching(series); historyRevision++ }, onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ }) }, backdrop = chromeBackdrop, onDownloads = { model.showDownloads = true })
+                !showLinkDetails -> CatalogScreen(catalog, images, browseMode = browsing, onExpand = { browsing = true }, onOpen = { item -> siteDownload.updateInput(item.url); siteDownload.inspect(item.poster); showLinkDetails = true }, onLink = { siteDownload.updateInput(""); showLinkDetails = true }, continueWatching = { ContinueWatchingRow(continueWatching.filter { series ->
+                    when (catalog.source) {
+                        CatalogSource.KISSKH -> series.provider == SiteDownloadProvider.KISSKH
+                        CatalogSource.EROTICMV -> series.provider == SiteDownloadProvider.EROTICMV
+                        else -> false
+                    }
+                }, images, onOpen = { series -> remoteEpisode = null; playingRemote = series }, onRemove = { series -> history.removeFromContinueWatching(series); historyRevision++ }, onMarkCompleted = { series -> history.markCompleted(series); historyRevision++ }) }, backdrop = chromeBackdrop, onDownloads = { model.showDownloads = true })
                 else -> screenState.SaveableStateProvider("sites") {
                     SiteDownloadScreen(siteDownload, model, images,
                         onBack = { showLinkDetails = false },
@@ -345,7 +351,7 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
         if (playbackSeries != null) {
             ReferenceVideoPlayer(playbackSeries, "Best", onClose = { playingSaved = null; historyRevision++ },
                 initialId = if (fallbackSeries != null) initial.id else initial.episodeId,
-                downloadedOnly = true, offlineRows = playlist.takeIf { fallbackSeries != null }, onDownload = ::downloadFromPlayer)
+                downloadedOnly = true, offlineRows = playlist, onDownload = ::downloadFromPlayer)
         }
     }
     playingRemote?.let { series ->

@@ -37,7 +37,7 @@ import com.example.animepahedl.CatalogItem
 /** Home rails follow Anilili's carousel/grid and explicit load-more behavior. */
 internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSections(
     titles: List<CatalogItem>, images: ImageLoader, columns: Int, phoneCardWidth: androidx.compose.ui.unit.Dp, expanded: List<String>,
-    toggle: (String) -> Unit, onOpen: (String) -> Unit, onMore: () -> Unit, loading: Boolean, hasMore: Boolean,
+    toggle: (String) -> Unit, onOpen: (CatalogItem) -> Unit, onMore: () -> Unit, loading: Boolean, hasMore: Boolean,
 ) {
     val sections = listOf("Popular" to titles.take(10), "Discover" to titles.drop(10))
     sections.filter { it.second.isNotEmpty() }.forEach { (name, entries) ->
@@ -59,7 +59,7 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
             items(rows.size, key = { "section:$name:${rows[it].first().url}" }, span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
                 contentType = { if (wideArtwork) "banner-grid-row" else "poster-grid-row" }) { index ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    rows[index].forEach { entry -> CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.weight(1f)) }
+                    rows[index].forEach { entry -> CatalogPosterCard(entry, images, { onOpen(entry) }, Modifier.weight(1f)) }
                     repeat(sectionColumns - rows[index].size) { Spacer(Modifier.weight(1f)) }
                 }
             }
@@ -78,7 +78,7 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
             contentType = { if (wideArtwork) "banner-carousel" else "poster-carousel" }) {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(entries, key = { it.url }, contentType = { "catalog-card" }) { entry ->
-                    CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.width(if (entry.wideArtwork) phoneCardWidth * (16f / 9f) / (2f / 3f) else phoneCardWidth))
+                    CatalogPosterCard(entry, images, { onOpen(entry) }, Modifier.width(if (entry.wideArtwork) phoneCardWidth * (16f / 9f) / (2f / 3f) else phoneCardWidth))
                 }
                 if (name == "Discover" && hasMore) item(key = "more:$name", contentType = "pagination-action") {
                     Column(Modifier.width(92.dp).height(160.dp).clip(RoundedCornerShape(12.dp))

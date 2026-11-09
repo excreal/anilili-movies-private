@@ -218,7 +218,8 @@ internal fun SiteDownloadScreen(
 @Composable
 private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
     val canvas = MaterialTheme.colorScheme.background
-    val backdrop = series.metadata?.images?.firstOrNull { it.role in setOf("banner", "backdrop", "featured_artwork") }?.url ?: series.poster
+    val backdrop = series.metadata?.images?.firstOrNull { it.role in setOf("banner", "backdrop", "featured_artwork") }?.url
+        ?: series.posterThumbnail()
     val poster = series.posterThumbnail()
     val bannerArtwork = series.provider == SiteDownloadProvider.KISSKH
     // Match Anilili's detail hero: carry the artwork behind the status bar and toolbar, then
