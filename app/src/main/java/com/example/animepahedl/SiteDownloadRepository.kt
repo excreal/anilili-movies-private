@@ -1,7 +1,6 @@
 package com.example.animepahedl
 
 import com.google.gson.JsonParser
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
@@ -41,7 +40,7 @@ internal class SiteDownloadRepository(
                     listOf(SiteDownloadEpisode(initial.url.toString(), 1, title, initial.url.toString())), variantQualities(variants))
             }
             else -> {
-                val (slug, requestedEpisode) = dramaRoute(url, provider)
+                val (slug, _) = dramaRoute(url, provider)
                 val target = when (provider) {
                     SiteDownloadProvider.DRAMATIP -> url.newBuilder().encodedPath("/series/$slug").query(null).build()
                     SiteDownloadProvider.KISS18 -> url.newBuilder().encodedPath("/title/$slug").query(null).build()
@@ -49,15 +48,16 @@ internal class SiteDownloadRepository(
                     else -> error("unreachable")
                 }
                 val page = if (provider == SiteDownloadProvider.NARTO) nartoPage(target, cookie) else fetch(target, cookie = cookie)
-                val series = parseDramaSeries(page.text, page.url, provider, slug)
-                // A locked/unavailable first episode must not prevent selecting other episodes.
-                val sample = series.episodes.firstOrNull { it.number == requestedEpisode } ?: series.episodes.first()
-                val variants = try { episodeVariants(sample.url.toHttpUrl(), provider, cookie) }
-                    catch (cancelled: CancellationException) { throw cancelled }
-                    catch (_: Exception) { emptyList() }
-                series.copy(qualities = variantQualities(variants))
+                parseDramaSeries(page.text, page.url, provider, slug)
             }
         }
+    }
+
+    /** Optional UI hint. Playback and downloads always resolve the selected episode again. */
+    suspend fun discoverQualities(series: SiteDownloadSeries, episodeNumber: Int? = null, cookie: String = ""): List<String> = withContext(Dispatchers.IO) {
+        if (!series.provider.isShortDrama) return@withContext series.qualities
+        val episode = series.episodes.firstOrNull { it.number == episodeNumber } ?: series.episodes.firstOrNull() ?: return@withContext series.qualities
+        variantQualities(episodeVariants(episode.url.toHttpUrl(), series.provider, cookie))
     }
 
     suspend fun resolve(locator: String, quality: String = "Best", cookie: String = ""): ResolvedMedia = withContext(Dispatchers.IO) {

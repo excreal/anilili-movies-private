@@ -39,6 +39,14 @@ internal data class SiteShowMetadata(val description: String? = null, val altern
 internal data class SiteDownloadSeries(val provider: SiteDownloadProvider, val id: String, val title: String,
     val poster: String, val url: String, val episodes: List<SiteDownloadEpisode>, val qualities: List<String> = listOf("Best"),
     val description: String = "", val metadata: SiteShowMetadata? = null)
+internal fun SiteDownloadSeries.matchesInspection(provider: SiteDownloadProvider, id: String, expectedGeneration: Int, generation: Int): Boolean =
+    expectedGeneration == generation && this.provider == provider && this.id == id
+internal fun mergeDiscoveredQualities(current: SiteDownloadSeries, expectedProvider: SiteDownloadProvider, expectedId: String,
+    expectedGeneration: Int, generation: Int, qualities: List<String>): SiteDownloadSeries =
+    if (current.matchesInspection(expectedProvider, expectedId, expectedGeneration, generation)) current.copy(qualities = qualities) else current
+internal fun mergeInspectionMetadata(current: SiteDownloadSeries, expectedProvider: SiteDownloadProvider, expectedId: String,
+    expectedGeneration: Int, generation: Int, metadata: SiteShowMetadata): SiteDownloadSeries =
+    if (current.matchesInspection(expectedProvider, expectedId, expectedGeneration, generation)) current.copy(metadata = metadata) else current
 internal val SiteDownloadSeries.isSingleVideo get() = provider in setOf(SiteDownloadProvider.DIRECT, SiteDownloadProvider.EROTICMV)
 internal data class DramaVariant(val url: String, val quality: String = "Original", val backupUrls: List<String> = emptyList(),
     val mimeType: String = "video/mp4", val headers: Map<String, String> = emptyMap(), val width: Int = 0, val height: Int = 0, val subtitles: List<MediaSubtitle> = emptyList())

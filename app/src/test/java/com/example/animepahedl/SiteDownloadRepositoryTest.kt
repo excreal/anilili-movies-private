@@ -1,6 +1,8 @@
 package com.example.animepahedl
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -10,6 +12,8 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -40,12 +44,70 @@ class SiteDownloadRepositoryTest {
         val series = repo.inspect("https://dramatip.net/series/story", "session=secret")
         assertEquals("A Story", series.title)
         assertEquals(listOf(1), series.episodes.map { it.number })
-        assertEquals(listOf("Best", "720p"), series.qualities)
+        assertEquals(listOf("Best"), series.qualities)
+        assertEquals(listOf("/series/story"), requests.map { it.url.encodedPath })
+        assertEquals(listOf("Best", "720p"), repo.discoverQualities(series, cookie = "session=secret"))
         val media = repo.resolve(series.episodes.single().url, cookie = "session=secret")
         assertEquals("https://cdn.test/one.mp4", media.url)
         assertFalse(media.headers.containsKey("Cookie"))
         assertTrue(requests.all { it.header("Cookie") == "session=secret" })
         assertTrue(requests.all { it.url.host == "dramatip.net" })
+    }
+
+    @Test fun failedQualityProbeCannotBlockEpisodeSelection() = runBlocking {
+        val repo = repository { req ->
+            if (req.url.encodedPath == "/series/story") """<title>A Story | Dramatip</title><a href="/series/story/episode-1">1</a><a href="/series/story/episode-2">2</a>"""
+            else throw java.io.IOException("Player unavailable")
+        }
+        val series = repo.inspect("https://dramatip.net/series/story")
+        assertEquals(listOf("/series/story"), requests.map { it.url.encodedPath })
+        assertEquals(listOf(1, 2), parseSiteDownloadSelection("1-2", series.episodes).map { it.number })
+        assertTrue(runCatching { repo.discoverQualities(series, episodeNumber = 2) }.isFailure)
+        assertEquals("/series/story/episode-2", requests.last().url.encodedPath)
+        assertEquals(listOf(1, 2), parseSiteDownloadSelection("1-2", series.episodes).map { it.number })
+    }
+
+    @Test fun delayedQualityProbeRunsAfterInventoryAndSelectionAreReady() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val repo = repository { req ->
+            if (req.url.encodedPath == "/series/story") """<title>A Story | Dramatip</title><a href="/series/story/episode-1">1</a><a href="/series/story/episode-2">2</a>"""
+            else {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                """{"sourceFirst":{"chain":[{"type":"mp4","enc":"${encrypted("https://cdn.test/one.mp4")}"}]}}"""
+            }
+        }
+        val series = repo.inspect("https://dramatip.net/series/story")
+        val probe = async(Dispatchers.Default) { repo.discoverQualities(series) }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(1, 2), parseSiteDownloadSelection("1-2", series.episodes).map { it.number })
+        release.countDown()
+        assertEquals(listOf("Best", "Original"), probe.await())
+    }
+
+    @Test fun qualityResultForReplacedTitleIsDropped() {
+        val old = SiteDownloadSeries(SiteDownloadProvider.DRAMATIP, "DRAMATIP:old", "Old", "", "https://dramatip.net/series/old",
+            listOf(SiteDownloadEpisode("old-1", 1, "1", "https://dramatip.net/series/old/episode-1")))
+        val replacement = old.copy(id = "DRAMATIP:new", title = "New", qualities = listOf("Best"))
+        assertSame(replacement, mergeDiscoveredQualities(replacement, old.provider, old.id, 4, 5, listOf("Best", "720p")))
+        assertEquals("New", replacement.title)
+        assertEquals(listOf("Best"), replacement.qualities)
+    }
+
+    @Test fun metadataAndQualityMergesPreserveEitherCompletionOrder() {
+        val inventory = SiteDownloadSeries(SiteDownloadProvider.DRAMATIP, "DRAMATIP:show", "Show", "", "https://dramatip.net/series/show", emptyList())
+        val metadata = SiteShowMetadata(description = "Enriched")
+        val qualityFirst = mergeInspectionMetadata(
+            mergeDiscoveredQualities(inventory, inventory.provider, inventory.id, 2, 2, listOf("Best", "720p")),
+            inventory.provider, inventory.id, 2, 2, metadata)
+        val metadataFirst = mergeDiscoveredQualities(
+            mergeInspectionMetadata(inventory, inventory.provider, inventory.id, 2, 2, metadata),
+            inventory.provider, inventory.id, 2, 2, listOf("Best", "720p"))
+        assertEquals(metadata, qualityFirst.metadata)
+        assertEquals(listOf("Best", "720p"), qualityFirst.qualities)
+        assertEquals(metadata, metadataFirst.metadata)
+        assertEquals(listOf("Best", "720p"), metadataFirst.qualities)
     }
     @Test fun providerSameOriginMediaRetainsCookie() = runBlocking {
         val payload = encrypted("https://dramatip.net/media/one.mp4")

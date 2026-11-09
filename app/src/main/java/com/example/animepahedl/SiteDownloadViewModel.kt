@@ -24,6 +24,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     private val gson = Gson()
     private var inspectJob: Job? = null
     private var metadataJob: Job? = null
+    private var qualityJob: Job? = null
     private var generation = 0
     private var submitting = false
     var input by mutableStateOf("")
@@ -98,6 +99,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         generation++
         inspectJob?.cancel()
         metadataJob?.cancel()
+        qualityJob?.cancel()
         inspecting = false
         input = value
         series = null
@@ -112,6 +114,8 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         val request = input.trim()
         val current = ++generation
         inspectJob?.cancel()
+        metadataJob?.cancel()
+        qualityJob?.cancel()
         inspecting = true
         error = null
         series = null
@@ -122,19 +126,28 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
                 ensureActive()
                 if (generation == current) {
                     series = result
-                    metadataJob?.cancel()
                     if (result.provider != SiteDownloadProvider.DIRECT) metadataJob = viewModelScope.launch {
                         try {
                             val metadata = metadataApis.forProvider(result.provider).details(request).toAppMetadata()
                             ensureActive()
-                            if (generation == current && series?.id == result.id) series = result.copy(metadata = metadata)
+                            val latest = series
+                            if (latest != null) series = mergeInspectionMetadata(latest, result.provider, result.id, current, generation, metadata)
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) { /* A metadata challenge must not block playback or downloads. */ }
                     }
-                    quality = "Best"
                     val requestedEpisode = runCatching {
                         dramaRoute(siteDownloadInput(request), result.provider).second
                     }.getOrNull()
+                    if (result.provider.isShortDrama) qualityJob = viewModelScope.launch {
+                        try {
+                            val qualities = repository.discoverQualities(result, requestedEpisode, cookies.headerFor(request))
+                            ensureActive()
+                            val latest = series
+                            if (latest != null) series = mergeDiscoveredQualities(latest, result.provider, result.id, current, generation, qualities)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { /* Optional qualities do not affect episode selection. */ }
+                    }
+                    quality = "Best"
                     updateSelection(requestedEpisode?.toString().orEmpty())
                 }
             } catch (e: CancellationException) { throw e
@@ -144,7 +157,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun cancelInspect() { generation++; inspectJob?.cancel(); inspecting = false }
+    fun cancelInspect() { generation++; inspectJob?.cancel(); metadataJob?.cancel(); qualityJob?.cancel(); inspecting = false }
     fun chooseQuality(value: String) { if (value in (series?.qualities.orEmpty() + "Best")) quality = value }
     fun updateSelection(value: String) {
         selection = value
