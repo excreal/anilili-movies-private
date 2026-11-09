@@ -228,7 +228,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                             key.isNotBlank() && playbackHistory.matches(lastEpisode, key)
                         }
                         DownloadReferenceSeriesCard(
-                            series = DownloadReferenceSeries(title, episodes.firstOrNull { it.thumbnail.isNotBlank() }?.thumbnail.orEmpty(),
+                            series = DownloadReferenceSeries(title, downloadGroupArtwork(episodes, savedRecords),
                                 "${episodes.size} eps", if (bytes > 0) Formatter.formatShortFileSize(context, bytes) else "",
                                 if (progress.running) "↓ ${episodes.count { !it.complete && !it.failed && it.transfer != TransferState.PAUSED }}" else null,
                                 continued?.let { "Last watched · EP ${it.episodeNumber}" }

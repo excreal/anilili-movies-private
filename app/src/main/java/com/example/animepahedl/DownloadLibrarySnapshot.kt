@@ -7,6 +7,12 @@ internal data class DownloadLibrarySnapshot(
     val ready: Int = 0, val unfinished: Int = 0, val savedBytes: Long = 0
 )
 
+/** A show's poster belongs to its download group; episode thumbnails belong to its rows. */
+internal fun downloadGroupArtwork(rows: List<DownloadRow>, records: Map<String, ExportRecord>): String =
+    rows.firstNotNullOfOrNull { row ->
+        records[row.id]?.identity?.anime?.poster?.takeIf(String::isNotBlank)
+    } ?: rows.firstNotNullOfOrNull { it.thumbnail.takeIf(String::isNotBlank) }.orEmpty()
+
 /** Filtering, sorting, and grouping run on Default rather than on Compose's UI thread. */
 internal fun downloadLibrarySnapshot(rows: List<DownloadRow>, query: String, sort: String,
     previous: DownloadLibrarySnapshot): DownloadLibrarySnapshot {

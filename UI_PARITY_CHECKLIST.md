@@ -23,10 +23,12 @@ Reference: `/root/Anilili` source, plus the Android Developers accessibility and
 - Appearance presets now change the app-wide theme. Source chips can be reordered and hidden from Home and Browse; one source must remain enabled.
 - The details page only shows More when the overview text overflows, and its control is an explicit button.
 - Download poster removal controls keep their compact appearance but have a 48 dp touch target. Browse source chips and detail tabs have larger touch areas.
+- Download title cards now prefer artwork saved with the series identity over episode-level thumbnails; EroticMV identities store the normal poster variant when metadata exposes it. Episode rows retain their episode artwork.
 
 ## Verification still needed
 
 - [x] `:app:compileDebugKotlin` succeeds.
 - [x] Narto playback parsing recognizes both the opaque signed HLS fixture and the Flash Sale episode's opaque MP4 source (`SiteDownloadSourcesTest`).
+- [x] Download group poster selection prefers the series poster for every source and falls back to episode artwork only when series artwork is unavailable (`DownloadGroupArtworkTest`).
 - [ ] Device visual and interaction pass. `adb devices -l` currently reports no connected device, so screenshots and live gesture checks are unavailable in this workspace.
 - [ ] Recheck the rendered layout on a narrow phone and a landscape device after installing the release APK.

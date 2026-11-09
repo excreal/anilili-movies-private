@@ -56,10 +56,12 @@ internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val
             .joinToString("") { "%02x".format(it) }
     }
     companion object {
-        fun siteDownload(series: SiteDownloadSeries, episode: SiteDownloadEpisode, quality: String, audio: String) =
-            DownloadIdentity(Anime("sites:${series.provider.name}:${series.id}", series.title, series.poster,
-                "", if (series.isSingleVideo) "Video" else "Series", ""), Episode(episode.id, episode.displayNumber, series.poster, ""),
+        fun siteDownload(series: SiteDownloadSeries, episode: SiteDownloadEpisode, quality: String, audio: String): DownloadIdentity {
+            val poster = series.posterThumbnail()
+            return DownloadIdentity(Anime("sites:${series.provider.name}:${series.id}", series.title, poster,
+                "", if (series.isSingleVideo) "Video" else "Series", ""), Episode(episode.id, episode.displayNumber, poster, ""),
                 quality, audio, "sites", episode.url)
+        }
     }
 }
 
