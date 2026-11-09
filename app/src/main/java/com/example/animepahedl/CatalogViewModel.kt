@@ -18,6 +18,7 @@ internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KIS
 internal object MovieCatalogConfig {
     val sources = listOf(CatalogSource.KISSKH, CatalogSource.EROTICMV)
     val initialSource = CatalogSource.KISSKH
+    val supportedProviders = setOf(SiteDownloadProvider.KISSKH, SiteDownloadProvider.EROTICMV, SiteDownloadProvider.DIRECT)
 }
 
 internal data class CatalogSourceOrder(val order: List<CatalogSource>, val enabled: Set<CatalogSource>)

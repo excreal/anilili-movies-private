@@ -301,7 +301,7 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
     }
     private suspend fun prepareSites(initial: SiteDownloadPreparation): Result {
         val cookies = SiteDownloadCookieStore(applicationContext)
-        val repository = SiteDownloadRepository(cookieHeader = cookies::headerFor)
+        val repository = appSiteDownloadRepository(cookieHeader = cookies::headerFor)
         var record = initial
         while (true) {
             val start = android.os.SystemClock.elapsedRealtime()
