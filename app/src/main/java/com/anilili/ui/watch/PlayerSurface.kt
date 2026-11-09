@@ -985,6 +985,7 @@ fun PlayerSurface(
             activeStream.headers,
             activeStream.avoidCronet,
             activeStream.isProgressive,
+            activeStream.url,
         )
         val watchRoute = notificationRoute ?: Routes.watch(animeId, provider, category, episode)
         val metadata = MediaMetadata.Builder()

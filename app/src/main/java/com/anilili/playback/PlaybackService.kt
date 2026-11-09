@@ -35,6 +35,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.anilili.diagnostics.DiagnosticsLog
 import com.example.animepahedl.MainActivity
+import com.example.animepahedl.SiteDownloadCookieStore
 import com.anilili.data.device.isTelevision
 import com.anilili.data.remote.AppDns
 import com.anilili.data.settings.SettingsStore
@@ -50,6 +51,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 
@@ -175,6 +177,9 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         DiagnosticsLog.event("PlaybackService.onCreate")
+        playbackCookieStore = SiteDownloadCookieStore(applicationContext)
+        val headerPolicy = NativeRequestHeaderPolicyInterceptor()
+        nativeHeaderPolicy = headerPolicy
         // Native Media3 playback must not initialize Chromium just to obtain an HTTP header.
         val playerUserAgent = NATIVE_PLAYBACK_USER_AGENT
         activeUserAgent = playerUserAgent
@@ -191,6 +196,7 @@ class PlaybackService : MediaSessionService() {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            .addNetworkInterceptor(headerPolicy)
             .build()
         val okHttpFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent(playerUserAgent)
@@ -238,7 +244,7 @@ class PlaybackService : MediaSessionService() {
         // player — the manifest and every segment would be looked up by the resolver being bypassed.
         // OkHttp is the only transport here that reads [AppDns], so it is the one that runs.
         val transportDataSource = DataSource.Factory {
-            val factory = if (activeAvoidCronet || AppDns.active) okHttpFactory else httpFactory
+            val factory = if (activeCredentialedHeaders || activeAvoidCronet || AppDns.active) okHttpFactory else httpFactory
             factory.createDataSource()
         }
         // Above either HTTP stack and below the caches: the same rule reaches manifests,
@@ -945,6 +951,13 @@ class PlaybackService : MediaSessionService() {
         @Volatile
         private var activeAvoidCronet: Boolean = false
 
+        @Volatile
+        private var activeCredentialedHeaders: Boolean = false
+        @Volatile
+        private var nativeHeaderPolicy: NativeRequestHeaderPolicyInterceptor? = null
+        @Volatile
+        private var playbackCookieStore: SiteDownloadCookieStore? = null
+
         /**
          * Whether the current source is one long file rather than a list of segments.
          *
@@ -1058,11 +1071,19 @@ class PlaybackService : MediaSessionService() {
             extraHeaders: Map<String, String> = emptyMap(),
             avoidCronet: Boolean = false,
             progressive: Boolean = false,
+            streamUrl: String? = null,
         ) {
             activePlaylistKey = playlistKey
             activeAvoidCronet = avoidCronet
             activeProgressive = progressive
             activeReferer = referer?.takeIf(String::isNotBlank)
+            val root = streamUrl?.toHttpUrlOrNull()
+            val cookies = playbackCookieStore
+            activeCredentialedHeaders = extraHeaders.keys.any(::isPrivatePlaybackHeader) ||
+                (root != null && cookies?.hasCookies == true)
+            val policyId = nativeHeaderPolicy?.update(root?.let {
+                NativeHeaderContext(it, extraHeaders.toMap(), cookies?.let { store -> store::headerFor } ?: { "" })
+            })
             // A null referer is the app's signal that a stream is *not gated* — AniChan,
             // AnimeHeaven and XFDM all set it deliberately, each on a measurement that their CDN
             // refuses nothing. Standing in `https://www.miruro.to/` for them did not make those
@@ -1072,11 +1093,14 @@ class PlaybackService : MediaSessionService() {
             // subtitle CDN answers 403 to it: measured against s1.toroplay.click, the same URL is
             // 200 with no Referer and 403 with miruro's. The track appeared in the menu, English
             // was selected, and no line was ever drawn.
-            val headers = mediaRequestHeaders(
+            val allHeaders = mediaRequestHeaders(
                 referer = activeReferer,
                 userAgent = activeUserAgent,
                 extraHeaders = extraHeaders,
             )
+            val headers = allHeaders.filterKeys { !isPrivatePlaybackHeader(it) }.toMutableMap().apply {
+                policyId?.let { put(NativeRequestHeaderPolicyInterceptor.POLICY_MARKER, it) }
+            }
             // Both stacks stay configured; the upstream factory picks between them per stream.
             activeHttpFactory?.setDefaultRequestProperties(headers)
             nonCronetHttpFactory?.setDefaultRequestProperties(headers)
