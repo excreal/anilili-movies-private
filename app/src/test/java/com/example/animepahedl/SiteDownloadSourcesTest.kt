@@ -100,6 +100,13 @@ class SiteDownloadSourcesTest {
         assertEquals("https://stream.narto-drama.com/e/m/SANITIZED_SIGNED_STREAM?mh=1", media.url)
         assertEquals("application/x-mpegURL", media.mimeType)
     }
+    @Test fun nartoDetectsFlashSaleVideoWhenPrefetchModeIsNone() {
+        val body = "const episodeItemsRaw = " + javaClass.getResource("/narto/flash-sale-episode-actual-shape.json")!!.readText().trim() + ";"
+        val base = "https://edge.narto-drama.com/detail/watch/1-flash-sale/1?lang=en-US".toHttpUrl()
+        val media = parseNartoVariants(body, base, 1).single()
+        assertEquals("https://melolo2.narto-drama.com/SANITIZED_OPAQUE_VIDEO_TOKEN", media.url)
+        assertEquals("video/mp4", media.mimeType)
+    }
     @Test fun metadataOverviewAndEroticMvPosterUseTheDetailedArtwork() {
         val series = SiteDownloadSeries(SiteDownloadProvider.EROTICMV, "m", "Movie", "banner.jpg", "https://eroticmv.com/m/",
             emptyList(), description = "Short OG text", metadata = SiteShowMetadata(description = "Full synopsis",

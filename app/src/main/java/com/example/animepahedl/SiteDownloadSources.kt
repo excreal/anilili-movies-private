@@ -240,13 +240,22 @@ internal fun parseNartoVariants(body: String, url: HttpUrl, number: Int): List<D
         ?: throw IOException("Narto episode metadata is missing.")
     val episode = items.firstOrNull { it.isJsonObject && it.asJsonObject.dramaInt("route_episode_number") == number }?.asJsonObject
         ?: throw IOException("Requested Narto episode is unavailable.")
-    return listOf("direct_play_url", "play_url").mapNotNull { key ->
+    return listOf("direct_play_url", "play_url", "schema_content_url").mapNotNull { key ->
         val raw = episode.dramaString(key).takeIf(String::isNotBlank) ?: return@mapNotNull null
         val media = dramaAbsolute(url, raw)
-        val hls = isDramaHls(media.toHttpUrl()) || (key == "play_url" && episode.dramaString("browser_prefetch_mode") == "hls") ||
+        val target = media.toHttpUrl()
+        if (target.scheme != "https") return@mapNotNull null
+        val hls = isDramaHls(target) || (key == "play_url" && episode.dramaString("browser_prefetch_mode") == "hls") ||
             (key == "direct_play_url" && episode.get("direct_play_is_hls")?.toString() == "true")
-        if (!hls && !isDramaFile(media.toHttpUrl())) return@mapNotNull null
-        DramaVariant(media, mimeType = if (hls) "application/x-mpegURL" else "video/mp4")
+        // Narto can publish playable provider URLs as opaque paths with browser_prefetch_mode=none.
+        // That mode only disables neighbor prefetch; the site's player still treats play_url as a
+        // native video. Preserve that behavior and infer MP4 unless HLS is explicitly advertised.
+        val mime = when {
+            hls -> "application/x-mpegURL"
+            target.encodedPath.endsWith(".webm", true) || target.queryParameter("mime_type") == "video/webm" -> "video/webm"
+            else -> "video/mp4"
+        }
+        DramaVariant(media, mimeType = mime)
     }.distinctBy { it.url }.also { if (it.isEmpty()) throw IOException("Narto returned no supported media source.") }
 }
 internal fun kissVideoObject(value: JsonElement): Sequence<JsonObject> = sequence {
