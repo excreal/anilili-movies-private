@@ -16,7 +16,7 @@ internal fun PreparationStatusRow(status: PreparationStatus, remaining: Int, onP
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (status.automatic) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
         else AppSymbol(AppIcon.Download, Modifier.size(18.dp))
-        Text("${status.label} · $remaining left", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+        Text((if (status.totalSelected > 0) "${status.totalSelected} episodes queued · " else "") + (if (status.automatic) "$remaining remaining to prepare" else status.label), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (status.needsFolderAccess && onChooseFolder != null) {
             IconButton(onClick = onChooseFolder) { AppSymbol(AppIcon.Folder, description = "Choose existing downloads folder") }
@@ -24,12 +24,12 @@ internal fun PreparationStatusRow(status: PreparationStatus, remaining: Int, onP
             IconButton(onClick = onVerify) { AppSymbol(AppIcon.Shield, description = "Verify session") }
         } else IconButton(onClick = if (status.automatic) onPause else onResume) {
             AppSymbol(if (status.automatic) AppIcon.Pause else AppIcon.Play,
-                description = if (status.automatic) "Pause link preparation" else "Resume link preparation")
+                description = if (status.automatic) "Pause preparation" else "Resume preparation")
         }
         Box {
             IconButton(onClick = { menu = true }) { AppSymbol(AppIcon.More, description = "Preparation actions") }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Discard remaining links") }, onClick = { menu = false; onDiscard() })
+                DropdownMenuItem(text = { Text("Cancel remaining episodes") }, onClick = { menu = false; onDiscard() })
             }
         }
     }

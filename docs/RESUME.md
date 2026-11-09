@@ -183,3 +183,250 @@ episode range controls use AnimatedVisibility and synopsis expansion animates.
 Explore uses a smaller initial offset with a search heading and hides sort until
 results exist. Theme surfaces have a darker neutral hierarchy. Main screens use
 shared card shapes. No emulator or device visual validation has been performed.
+
+## Custom downloader only
+
+User requested removing AnimePahe search/downloads and using /root/Anihili theme;
+the actual reference directory is /root/Anilili. Removed search/details composables,
+source tabs, anime preparation worker implementation and anime-specific settings
+entries. Custom downloader is the only home screen. Legacy anime preparation is
+discarded at startup and new/resumed/retried legacy transfers are rejected.
+Existing saved-file records remain usable; shared legacy model classes retain
+serialization compatibility. App label is Video Downloader; package and key remain
+unchanged for updates. Theme adapts Anilili's default AMOLED monochrome palette
+and copies its phone typography; Appearance settings are not ported.
+
+## Remote catalog browsing and Anilili display integration
+
+Explore defaults to Dramatip popular, with source selection, debounced search,
+poster grid, spotlight pager, pagination where offered, detail-to-download and
+secondary Paste link. Shared SiteCatalog is an internal application API, not a
+public hosted REST server. Dramatip uses /category/popular and /search?q=;
+Kiss18 searches its downloaded catalogue-browse.mjs snapshot; Narto uses edge
+home/search JSON-LD. EroticMV WordPress browsing is implemented but server access
+was HTTP403 and requires further device verification. TikTok remains excluded.
+
+Copied/adapted Anilili silhouette, water-fill loader and launch splash, phone poster
+cards and typography, plus downloads artwork/row styling. Background APIs do not
+execute provider JavaScript. Existing saved files and signed update identity retained.
+
+EroticMV follow-up: browser-style Accept/Language/Sec-Fetch and Referer yielded
+HTTP200 for home and ?s=love. No cookies were issued in that probe. Shared other-site
+transport now retains scoped session cookies and merges imported cookies;
+EroticMV warms home before first search. Pagination /page/2/?s=love verified.
+Dramatip transport likewise retains cookies and uses browser navigation headers.
+
+## Vertical short-drama playback
+
+Dramatip, Kiss18 and Narto are explicitly short-drama providers; EroticMV is movies,
+direct links are generic video. Added Watch action for resolved series/video and
+in-app saved playback. Both remote and local vertical pagers own one ExoPlayer,
+prepare only settled episodes, FIT without cropping, pause in background, release
+on close; saved playback retains External fallback. Media3 UI dependency restored.
+Reference inspection: Anilili uses Media3 offline cache + Transformer export, no
+bundled FFmpeg. This app retains its established FFmpeg export implementation;
+full Transformer/export-engine migration has not been done.
+
+GitHub player review: compared androidx/media demos/shortform and
+clown6613/ComposeReels. Added stable remote episode keys and bounded 16MiB player
+buffers with 5–15s duration targets; one active decoder, no neighboring preload
+manager. Media3 #3445 documents a 1.11.1 preload memory retention issue, so nearby
+preloading is deliberately absent. 'Catalog updated' reported by user was a
+subagent progress notice, not an app message (user clarified).
+
+Final custom-catalog/vertical-player APKs verified and published:
+- Release: http://20.120.96.17/builds/app-release-0a7f229e825c.apk
+- Debug: http://20.120.96.17/builds/app-debug-5b1a1b31e60e.apk
+
+Build log /tmp/android-setup/shortdrama-final-build.log: BUILD SUCCESSFUL.
+Verified signatures, release certificate matches .signing, bundled FFmpeg hash,
+16KiB zip alignment, R8 persisted names, and public HTTP resume/full-file SHA256.
+No emulator/device runtime tests run. Transformer engine migration not performed;
+existing FFmpeg export retained. Anilili player architecture adapted, not a full
+copy of its background MediaSessionService/custom controls.
+
+## Dedicated details and download-range dialog
+
+Catalog clicks now show Details with poster, provider/type, episode count, available
+synopsis, Stream and Download. Source URL/session controls are secondary. Download
+opens a modal with comma-separated episode numbers/ranges (e.g.1-5,9,12-20), selected
+count, quality and destination. Invalid/unavailable ranges disable confirmation.
+Explore now has remote selection in the app bar, search with secondary paste-link
+action, compact 200dp spotlight and wider two-column phone cards with image fallback.
+
+Further visual correction based on user screenshots: replaced generic navigation
+with adapted Anilili floating bar (white selected capsule, icons, gradient/rim,
+spring animation). Home uses actual MediaRail-style headings and horizontal cards;
+Browse is a separate search/grid destination. Expanded grids and home share cards.
+Earlier release lint failed inside Kotlin FIR/UAST analysis after sources changed
+mid-build; final build reruns with source edits finished.
+
+Final details/bottom-sheet/navigation build:
+- Release http://20.120.96.17/builds/app-release-36313ed16c29.apk
+- Debug http://20.120.96.17/builds/app-debug-dcce6857a915.apk
+
+/tmp/android-setup/anilili-sheet-build.log: BUILD SUCCESSFUL, release lint passed.
+Signatures/release cert, bundled FFmpeg hash, zip alignment, retained model names,
+and public HTTP resumed-file hashes verified. APK dex checked for new range-sheet
+strings. No device/emulator visual or interaction testing was performed. Prior Play
+Protect classification remains unexplained; packaging/signature verification does
+not prove the classification is cleared or a false positive.
+
+## Poster loading, catalog caching, downloads grid
+
+Fixed image loader inheriting AnimePahe Referer: remote artwork now uses independent
+bounded HTTP, URL-scoped sessions/referrers, Dramatip no-referrer, explicit disk and
+memory image caches, crossfade and stable image keys. Responsive Dramatip URLs now
+prefer ~384px vs3840px and ignore flags. Kiss18 home includes fullplayable catalog
+after curatedtitles. Catalog ViewModel caches up to8 metadata pages in memory and30
+on disk,600items per persisted page,15min freshness,stale-display before refresh.
+Home immediately draws firstpage and fetches up to2 extra pages; Browse/Discover
+append near scrollend. Metadata data classes have @Keep for release persistence.
+Downloads now postergrid -> separate seriesepisode list, matching Anilili structure,
+with groupcounts/bytes/progress/delete confirmation and retained rowactions.
+
+Latest verified cache/grid builds:
+- Release http://20.120.96.17/builds/app-release-470a5af2a2bd.apk
+- Debug http://20.120.96.17/builds/app-debug-450874d811a8.apk
+
+Build /tmp/android-setup/cache-grid-final-build.log succeeded, release lint passed.
+APK signatures/releasekey, native FFmpeg hash, zip alignment, R8 persisted names,
+HTTP byte-range resume/full-file hashes verified. Downloads header now belongs to
+its grid/series page rather than duplicated outer toolbar. Device runtime and
+visual behavior remain untested here; no emulator installed/launched.
+
+## Full screen port + playback/queue fixes
+
+User explicitly replaced approximation layouts with Anilili phone screen structures.
+Home now fullbleed460dp6itemhero, actual copied headerwordmark, overlay sourcechips,
+centered title/dots, ContinueWatching slot,108dp rails and INPLACE persection
+Expand/Carousel3column grid (Browse separate3column grid). Downloads PageTitleBar,
+PageSearch, filterrow,responsiveposters and episode page geometry ported. Detail
+centeredsticky pills/actionordering/qualitytrack/episodecheckboxgeometry refined.
+
+Online/offline now share DramaPlayerSurface: custom controls,no nativePlayerView
+controller, autoplay, auto-next, episode sheet,seekbar, persistent5sec/pause/switch
+resume keyed source locator. Local/remote key identityshared; Home history uses
+registeredsource metadata and actual playback timestamps. Onebounded16MiBdecoder.
+
+Every selected download immediately represented by preparationjournal placeholders;
+actual transfers replace by show/episode, independentquality. Merge used in both
+Library/Main selection. Placeholderpause/resume batch routedto preparation;
+cancel routedgeneration-safejournalremoval, realactionsremainrepository.
+
+Imagefix further verified:72DrTip URLs,7expiredsignedCDNs recover from samehostpublic
+uploadpaths(verified200);cachedoldURLs rewritten. OneupstreamTikTokcover403 andone
+expiredTLSCDN remain; noTLSbypass. ImageHTTP200HTML/JSON rejectedbeforecache.
+Blacklauncherbackground andwhitevectorstartupmark replacepurpleforeground.
+
+Final reference-screen geometry adjustments: hero header now uses actual copied
+Anilili wordmark resource; sourcechips overlay artwork underheader. Browse owns
+its header. All content scrolls behind floating navigation with108dp final padding.
+Expanded Home section rows were moved into outerLazyGridScope to avoidcomposing
+hundreds of postersatonce; same3col look and in-placeCarousel toggle retained.
+Both carousel andexpandedDiscover requestmore nearend. Settings ownsreference40sp
+header/groupsections; no duplicateouterbar. Playbackmetadata timestamps feedHome
+ContinueWatching, unfinishedonly. Launcherforeground nowwhitevector; blackday/night
+window backgrounds. Allscreensretainactualprovidermetadata, no syntheticratings.
+
+Final verified reference-port APKs:
+- Release http://20.120.96.17/builds/app-release-0dad9d1c84b9.apk
+- Debug http://20.120.96.17/builds/app-debug-0312367f2449.apk
+
+/tmp/android-setup/reference-port-final-build.log succeeded, release lintpassed.
+Verified APK signatures/releasecertificate,bundledFFmpeg hash,16KiBzipalignment,
+persistedR8modelnames,HTTPresumedfullfileSHA256; newUI/player/queue stringschecked
+inDEX. No emulator/device runtime orvisual verification performed. PriorPlayProtect
+classification remains unexplained and is not certified cleared bythesechecks.
+
+## Overlay contrast / thumbnail follow-up
+
+Provider chips over artwork now use explicit white/black selected colors and dark
+opaque unselected surfaces, not inherited gray Material defaults. Hero title has
+stronger lower gradient and textshadow. Player contrast/compactseekbar and remaining
+thumbnail fallback/cache investigation delegated to ownedfiles; buildafterfrozen.
+
+Final contrast/direct-card-port build verified:
+- Release http://20.120.96.17/builds/app-release-9c731505ba4a.apk
+- Debug http://20.120.96.17/builds/app-debug-7893cb3a91d2.apk
+
+Build /tmp/android-setup/reference-contrast-final-build.log succeeded, lint passed.
+Player nowstrongtitlebackingscrim,whitebackicon,white/blackEpisodesbutton,4dpCanvas
+seekbarwith44dpgesture/accessibilitytarget. DownloadReferenceCards.kt contains
+source-derived actualcard/episoderow adapters includingrealresumehistorylabels.
+Browse header/reset/source-filter/search/categories-divider/results geometry ported.
+Hero490dp,title25sp,counttopright,activeindicatorpill and explicitchipcontrast.
+
+Thumbnail follow-up found actual3reportedCDNimagesHTTP200/decodevalid, notuniformly
+expired. Fixed doubleescapedresponsive-srcsetregex. ArtworkRecoveryrefreshesfailed
+cardfromdetailOGonce; replacementURLpersisted forfuturevisits,canonicalv3imagecache
+keysavoidoldbadentries. Allimageclientsretainboundedmemory/diskcaches; exceptions
+remainerrors/placeholders, noTLSbypass. Runtime/devicevisual validation notdone.
+APKsignature/releasecert,FFmpeghash,alignment,HTTPresume/SHAverified.
+
+## Original chrome source copy + full UI audit
+
+Copied original Anilili FloatingNavigationBar.kt and ChromeFade.kt, adaptingimports
+only plus Midnight-role/appCanvasFade bridging. Added Haze1.2.2 (same asreference),
+sharedscrolling hazeSource and exact22dpblur/.62tint/.04noise/.33inputscale; original
+navpadding/iconslots/pillspring/paintedfallback/rim restored. Five navslots nowmap
+Home/Search/Downloads/realhistoryLibrary/Settings. Header usesactualHomeTopChrome
+TopAppBar64dp/statusinsets/wordmark22dp andcopiedGenrePill drawgeometry; sourcechips
+retainproviderbindings. Herooriginal .30/.12/.45/canvas gradient restored.
+
+Fixed Browse Sources overlap (siblings inLazyGriditemwereoverlaid) with oneColumn;
+sourcechip32dp height/referencepadding. Fullinventoryandverificationstatus in
+`docs/UI_REFERENCE_CHECKLIST.md`, distinguishingverbatimsource fromdataadaptations
+and not claimingdevicevisualchecks. RemovedunusedChoiceMenu/Loading/EmptyState/old
+railcomposables. Originalappnotifications/calendar controlsnotfabricated.
+
+Final UI-audit/original-chrome build published:
+- Release http://20.120.96.17/builds/app-release-cce6c8e65683.apk
+- Debug http://20.120.96.17/builds/app-debug-6e6f513011d1.apk
+Build /tmp/android-setup/ui-checklist-final-build.log succeeded, release lintpassed.
+Signatures/releasekey,nativehash,alignment,HTTPresume/fullhashverified. Sourcebodies
+FloatingNavigationBar andChromeFade compareexactlywithAnilili afterimports/package
+normalization. UI_REFERENCE_CHECKLIST.md listsallactivecomponents,sourceadaptations
+anduncheckeddevicechecks. No device/emulatorvisualverification performed.
+
+## ADB device test + bookmark feature
+
+Realdevice TECNOKM7 API35 connected. Initialrelease installed but firstdrawcrashed:
+Haze header sampled containing parent source. Fixed by separate hero HazeState;
+nav stillsamplespage source. Rebuilt signedrelease andinstalled; agentverifiedHome,
+Details/48episodes/Episodestab,Downloadsempty,Libraryempty; nofollow-upcrashobserved.
+Cheapgpt-6-luna verificationagent usedatuserexplicitrequest.
+
+Added SavedShowsStore (persistent separatebookmarks),LibrarySavedShows/ContinueWatching,
+Save/Unsave action inremote/localplayer anddetailsheader. MetadataGsonusesexisting
+keptSiteDownloadSeries. New signedrelease installedsuccessfully:
+http://20.120.96.17/builds/app-release-3a0dfcab03ae.apk
+Build /tmp/android-setup/saved-shows-release-build.log passed incl lint. Releasekey,
+FFmpeg hash,alignment,HTTPresume/fullhashverified. Device test ongoing in
+`docs/DEVICE_TEST_REPORT.md`. Don'tclaimuntestedstream/downloadflowspassed.
+
+Cheaperverificationagent finisheddevicepass on release3a0dfcab03ae: playersave
+changedtounsave; streamposition08->25 withoutplaytap; episodepickerEpisode2;
+Librarysaved1ChainedTogether persistedafteramforce-stop/relaunch;ContinueWatching
+alsoappeared. Noobservedcrash. FloatingChatGPT sometimesobscuredrightside.
+Deviceinteractionstopped. Fulltestmatrix `docs/DEVICE_TEST_REPORT.md`.
+
+## Current follow-up release
+http://20.120.96.17/builds/app-release-87fa24f49bd3.apk
+Shared online/offline resume, downloaded-first catalog playback with one online fallback, immediate pause saves, two Library rows with exact episode/time/counts, copied Settings index/search, and separately keyed signed Nostr developer notices. Publisher docs: docs/DEVELOPER_NOTICES.md. Private key is ignored in .signing/announcement-key.properties; never publish its contents. No announcement was broadcast. Build/lint and package checks passed; cheaper-model source review found no blockers. Device currently disconnected; no new phone pass claimed.
+
+## Korean-only KissKH + notice delivery follow-up
+http://20.120.96.17/builds/app-release-c41d8f223cff.apk
+Link options removed. Added signed HTTP mirror at /srv/downloads/notices/announcement.json, IP-only cleartext network config, mandatory original signature verification, expired-mirror relay fallback, global/channel block checks, UI check outcomes and Worker retries on source failures. Publisher updates mirror atomically only on announcement broadcasts. Fresh test notice test-delivery-1794122711 published; expires in one day. ADB disconnected, no device receipt claimed. KissKH adapter restricts country2/type1, inspects only South Korea TVSeries, cached Korean-index search, public client-token MP4/HLS resolution and generic downloads. Compiled token tested against actual website JS; Korean MP4 header/range probe passed. Separate subtitles/embed hosts not integrated. Local playback metadata merged with known full series so partial download playlists do not erase full totals. Cheaper source review passed. Details docs: docs/KISSKH.md and docs/DEVICE_TEST_REPORT.md. No commit requested.
+
+
+## Original non-drama player and KissKH captions completed
+EroticMV and KissKH now dispatch to ReferenceVideoPlayer, which binds the actual original Anilili PlayerSurface and its dependency stack, rather than a recreated player. 131 com/anilili files present;117 compare equal after host import substitutions. Full inventory/host adaptations: docs/REFERENCE_PLAYER_PORT.md. Original services/media session, Cast, external-player return, subtitle controls/import/sync, quality/audio, gestures, TV and PiP wired to host. Local-first, shared stable-locator progress, saved actions and downloads connected; vertical sources retain original host short-drama player.
+KissKH subtitles follow public /api/Sub API with separate GUID, normalize source SRT/VTT and three legacy per-cue AES formats; persist as private VTT referenced by downloaded media. Not muxed into exported MP4. All five live sampled languages and synthetic three-format compiled Kotlin smoke passed. Optional OpenSubtitles key UI and copied original account dialog in Settings/Subtitles. No Anilili API key reused. Mobile cleartext policy now matches original for local Cast/external-player proxy; signed notice authenticity checks remain.
+Cheaper verification subagent source review found no blocking progress/PiP/subtitle/local-first issue. No suites, no emulator, no commit. Final build/lint and artifact verification passed. ADB disconnected; no install/device run claimed.
+
+
+## Player-port release verification (2026-11-08)
+Signed APK: http://20.120.96.17/builds/app-release-99bae75377e1.apk
+SHA-256: `99bae75377e180836f4a3af7329032d26e9c143cbfbc20bb6b389ea18a19bae3` (22,186,942 bytes).
+Final release compilation and lint passed: `/tmp/android-setup/reference-player-final-release.log`. Certificate, signature, ZIP alignment, unchanged FFmpeg and hosted byte-range download checks passed. Compiled subtitle smoke passed all five sampled live language files and three legacy decoding formats. Device install/playback/visual/PiP/Cast checks remain pending: `adb devices -l` is empty.

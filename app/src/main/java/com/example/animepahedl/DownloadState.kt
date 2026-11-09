@@ -58,7 +58,7 @@ internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val
     companion object {
         fun siteDownload(series: SiteDownloadSeries, episode: SiteDownloadEpisode, quality: String, audio: String) =
             DownloadIdentity(Anime("sites:${series.provider.name}:${series.id}", series.title, series.poster,
-                "", if (series.isSingleVideo) "Video" else "Series", ""), Episode(episode.id, episode.number.toString(), series.poster, ""),
+                "", if (series.isSingleVideo) "Video" else "Series", ""), Episode(episode.id, episode.displayNumber, series.poster, ""),
                 quality, audio, "sites", episode.url)
     }
 }

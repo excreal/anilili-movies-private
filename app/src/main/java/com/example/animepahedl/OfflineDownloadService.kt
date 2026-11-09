@@ -97,6 +97,7 @@ object OfflineDownloads {
             kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
             if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
             val record = Exports.all(app)[request.id]
+            require(record?.identity?.isSiteDownload == true) { "AnimePahe downloading has been removed." }
             val media = record?.media
             val upstream = if (record?.identity?.isSiteDownload == true || request.id.startsWith("sites:")) {
                 requireNotNull(media) { "Video source context is missing. Retry to resolve this episode again." }

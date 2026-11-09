@@ -19,12 +19,15 @@ internal class SiteDownloadRepository(
     private val userAgent: String = "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
     private val cookieHeader: ((String) -> String)? = null
 ) {
+    private val providerSession = CatalogSessionCookies()
+    private val kisskh = KisskhApi(client, cookieHeader)
     private data class Page(val text: String, val url: HttpUrl)
 
     suspend fun inspect(input: String, cookie: String = ""): SiteDownloadSeries = withContext(Dispatchers.IO) {
         val url = siteDownloadInput(input)
         val provider = siteDownloadProvider(url)
         when (provider) {
+            SiteDownloadProvider.KISSKH -> kisskh.series(url.newBuilder().host("kisskh.do").build())
             SiteDownloadProvider.DIRECT -> {
                 val title = url.pathSegments.lastOrNull()?.takeIf(String::isNotBlank) ?: "Direct video"
                 SiteDownloadSeries(provider, "DIRECT:${url}", title, "", url.toString(), listOf(SiteDownloadEpisode(url.toString(), 1, title, url.toString())))
@@ -67,13 +70,27 @@ internal class SiteDownloadRepository(
         val mediaUrl = chosen.url.toHttpUrl()
         if (cookie.isNotBlank() && mediaUrl.scheme == input.scheme && mediaUrl.host == input.host && mediaUrl.port == input.port) headers["Cookie"] = cookie
         headers.putAll(chosen.headers)
-        ResolvedMedia(chosen.url, chosen.quality, "und", headers, chosen.backupUrls, chosen.mimeType)
+        ResolvedMedia(chosen.url, chosen.quality, "und", headers, chosen.backupUrls, chosen.mimeType, chosen.subtitles)
+    }
+
+    suspend fun resolveChoices(locator: String, cookie: String = ""): List<ResolvedMedia> = withContext(Dispatchers.IO) {
+        val input = siteDownloadInput(locator)
+        val provider = siteDownloadProvider(input)
+        episodeVariants(input, provider, cookie).distinctBy { it.url }.map { variant ->
+            val headers = linkedMapOf("User-Agent" to userAgent)
+            if (provider != SiteDownloadProvider.DIRECT) headers["Referer"] = input.toString()
+            val mediaUrl = variant.url.toHttpUrl()
+            if (cookie.isNotBlank() && mediaUrl.scheme == input.scheme && mediaUrl.host == input.host && mediaUrl.port == input.port) headers["Cookie"] = cookie
+            headers.putAll(variant.headers)
+            ResolvedMedia(variant.url, variant.quality, "und", headers, variant.backupUrls, variant.mimeType, variant.subtitles)
+        }
     }
 
     private fun variantQualities(variants: List<DramaVariant>): List<String> = listOf("Best") + variants.map { it.quality }.distinct()
         .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
 
     private suspend fun episodeVariants(url: HttpUrl, provider: SiteDownloadProvider, cookie: String): List<DramaVariant> = when (provider) {
+        SiteDownloadProvider.KISSKH -> kisskh.variants(url.newBuilder().host("kisskh.do").build())
         SiteDownloadProvider.DIRECT -> listOf(DramaVariant(decodeEroticMedia(url.toString()), mimeType = if (isDramaHls(url)) "application/x-mpegURL" else if (url.encodedPath.endsWith(".webm", true) || url.queryParameter("mime_type") == "video/webm") "video/webm" else "video/mp4"))
         SiteDownloadProvider.DRAMATIP -> {
             val (slug, number) = dramaRoute(url, provider)
@@ -146,17 +163,23 @@ internal class SiteDownloadRepository(
     private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024, allowChallenge: Boolean = false): Page {
         require('\r' !in cookie && '\n' !in cookie) { "Invalid Cookie header." }
         // Re-evaluate imported cookies per request; explicit headers stay on their original origin.
-        val scoped = client.newBuilder().cookieJar(CookieJar.NO_COOKIES).addNetworkInterceptor { chain ->
+        val scoped = client.newBuilder().cookieJar(providerSession).addNetworkInterceptor { chain ->
             val builder = chain.request().newBuilder()
             val target = chain.request().url
             if (cookieHeader != null) {
                 builder.removeHeader("Cookie")
-                cookieHeader.invoke(target.toString()).takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
+                val imported = cookieHeader.invoke(target.toString()).split(';').map(String::trim).filter { '=' in it }
+                val names = imported.map { it.substringBefore('=') }.toSet()
+                val received = providerSession.loadForRequest(target).filterNot { it.name in names }.map { "${it.name}=${it.value}" }
+                (received + imported).joinToString("; ").takeIf(String::isNotBlank)?.let { builder.header("Cookie", it) }
             } else if (target.host != url.host || target.scheme != url.scheme || target.port != url.port) builder.removeHeader("Cookie")
             chain.proceed(builder.build())
         }.build()
-        val request = Request.Builder().url(url).header("User-Agent", userAgent).header("Accept", "application/json, text/html, */*")
-        if (referer != null) request.header("Referer", referer)
+        val request = Request.Builder().url(url).header("User-Agent", userAgent).header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,image/avif,image/webp,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Upgrade-Insecure-Requests", "1")
+            .header("Sec-Fetch-Dest", "document").header("Sec-Fetch-Mode", "navigate").header("Sec-Fetch-Site", "same-origin")
+        request.header("Referer", referer ?: url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())
         if (cookie.isNotBlank()) request.header("Cookie", cookie)
         return scoped.newCall(request.build()).consumeCancellable { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} from ${response.request.url.host}. Try again or refresh provider cookies.")

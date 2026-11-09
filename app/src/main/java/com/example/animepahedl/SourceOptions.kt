@@ -8,7 +8,7 @@ import java.util.Locale
 data class EpisodeSource(val url: String, val quality: String, val audio: String, val preferred: Boolean = false)
 data class ResolvedMedia(val url: String, val quality: String, val audio: String,
     val headers: Map<String, String> = emptyMap(), val backupUrls: List<String> = emptyList(),
-    val mimeType: String? = null) {
+    val mimeType: String? = null, val subtitles: List<MediaSubtitle>? = null) {
     // Resolvers may return signed URLs and cookies; never include either in diagnostics.
     override fun toString() = "ResolvedMedia(quality=$quality, audio=$audio, mimeType=$mimeType)"
 }

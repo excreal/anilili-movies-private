@@ -10,6 +10,8 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
 internal enum class AppIcon(val path: String) {
+    Bookmark("M6,3h12v19l-6,-4 -6,4V3M8,5v13.3l4,-2.7 4,2.7V5H8z"),
+    BookmarkFilled("M6,3h12v19l-6,-4 -6,4V3z"),
     Expand("M6,9l6,6 6,-6 -1.4,-1.4L12,12.2 7.4,7.6z"),
     Next("M9,6l6,6 -6,6 -1.4,-1.4L12.2,12 7.6,7.4z"),
     Info("M12,2a10,10 0,1 0,0 20,10 10,0 0,0 0,-20M11,10h2v7h-2zM11,6h2v2h-2z"),
@@ -26,6 +28,7 @@ internal enum class AppIcon(val path: String) {
     Delete("M6,7h12l-1,15H7zM9,2h6l1,2h4v2H4V4h4z"),
     Refresh("M18,7a8,8 0,1 0,2 9h-2.3a6,6 0,1 1,-1.1 -7.5L13,12h9V3z"),
     Close("M6,4 12,10 18,4 20,6 14,12 20,18 18,20 12,14 6,20 4,18 10,12 4,6z"),
+    CheckCircle("M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM10,17l-5,-5 1.41,-1.41L10,14.17l7.59,-7.59L19,8l-9,9z"),
     Check("M9,16.2 4.8,12 3.4,13.4 9,19 21,7 19.6,5.6z")
 }
 

@@ -12,13 +12,3 @@ import androidx.compose.ui.unit.dp
 internal fun AppCard(modifier: Modifier = Modifier, colors: CardColors = CardDefaults.cardColors(), content: @Composable ColumnScope.() -> Unit) {
     Card(modifier = modifier.animateContentSize(), shape = MaterialTheme.shapes.large, colors = colors, content = content)
 }
-
-@Composable
-internal fun AppCard(onClick: () -> Unit, modifier: Modifier = Modifier, colors: CardColors = CardDefaults.cardColors(), content: @Composable ColumnScope.() -> Unit) {
-    Card(onClick = onClick, modifier = modifier.animateContentSize(), shape = MaterialTheme.shapes.large, colors = colors, content = content)
-}
-
-@Composable
-internal fun SectionHeading(title: String, modifier: Modifier = Modifier) {
-    Text(title, modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-}

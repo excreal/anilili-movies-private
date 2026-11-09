@@ -1,3 +1,16 @@
+# Video Downloader
+
+The app now focuses on supported remote video sites. Explore opens Dramatip popular
+by default; its source dropdown also offers Kiss18, Narto Drama, EroticMV and KissKH (Korean dramas only).
+Search, homepage listings and available pagination use per-site catalog adapters.
+Tap a title to choose episodes/quality and download. Paste link remains available
+for supported site URLs and direct HLS/MP4/WebM files. TikTok is excluded.
+
+The Material theme, poster cards, animated water-fill loading mark, splash and
+download display are adapted from the local Anilili application. EroticMV homepage and search were verified with browser navigation headers,
+referrers and a persistent session; blocked requests show a useful error. These are internal application APIs, not a
+separately hosted public REST service.
+
 # Animepahe DL for Android
 
 A Material 3 downloader using the search, episode API, source selection, and
@@ -112,7 +125,7 @@ Release APKs are unsigned unless all signing variables below are configured.
 ## Video links
 
 Explore has separate **AnimePahe** and **Video links** tabs. Paste a
-Dramatip, Kiss18, Narto Drama, or EroticMV link,
+Dramatip, Kiss18, Narto Drama, EroticMV, or KissKH Korean drama link,
 or a direct HTTP(S) HLS/MP4/M4V/WebM URL, then choose **Inspect**. Review the series,
 quality, and selected episodes before downloading. Standalone videos have a
 single **Download video** action. TikTok is excluded. Episode selection accepts
@@ -228,3 +241,9 @@ quality and language files are reused before download; queued duplicates are
 reconciled when the folder is chosen. Install subsequent APKs as updates to retain
 library records and folder access. Selection controls live in the top app bar;
 additional eligible actions are in its overflow menu.
+
+Library keeps explicitly saved shows separately from Continue Watching. Use the
+bookmark action in a title's details or player to save/unsave it; this does not
+delete downloaded files or playback history. Saved shows persist across app
+updates and restarts. Saved-video players offer the same bookmark control when
+the original provider identity is available.

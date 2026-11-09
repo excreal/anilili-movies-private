@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="external_playback_notification_channel_description">Keeps protected streams available to another player</string>
+  <style name="Theme.MiruroNative.MediaRouter" parent="Theme.AppCompat.NoActionBar">
+    <item name="android:windowBackground">@color/miruro_bg</item>
+  </style>
+  <color name="miruro_bg">#FF0B0B0F</color>
+  <string name="external_playback_notification_stop">Stop</string>
+  <string name="external_playback_notification_channel_name">External playback</string>
+  <string name="external_playback_notification_title">Playing in another app</string>
+  <item name="caption_edge_inset_listener" type="id" />
+  <item name="caption_edge_inset" type="id" />
+  <string name="external_playback_notification_description">Anilili is keeping this stream available</string>
+</resources>

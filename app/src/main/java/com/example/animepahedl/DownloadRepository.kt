@@ -120,6 +120,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
     }
 
     override suspend fun resume(id: String) {
+        require(Exports.all(app)[id]?.identity?.isSiteDownload == true) { "This legacy download can no longer be resumed." }
         if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
         if (Exports.deleting(id)) return
         DownloadService.sendSetStopReason(app, OfflineDownloadService::class.java, id, Download.STOP_REASON_NONE, true)
@@ -178,6 +179,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         val enqueueLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
     }
     override suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord?): String {
+        require(identity.isSiteDownload) { "AnimePahe downloading has been removed. Add a supported video link instead." }
         val lock = enqueueLocks.getOrPut(identity.key) { kotlinx.coroutines.sync.Mutex() }
         lock.lock()
         try { return enqueueLocked(identity, media, previous) } finally { lock.unlock() }
@@ -227,6 +229,7 @@ internal class AndroidDownloadRepository(private val app: Context, private val n
         return id
     }
     override suspend fun retry(id: String) {
+        require(Exports.all(app)[id]?.identity?.isSiteDownload == true) { "This legacy download can no longer be retried." }
         val stored = Exports.all(app)[id]
         stored?.identity?.let { identity ->
             val tree = stored.tree.takeIf { hasOutputFolderAccess(app, it) } ?: settings.outputTree

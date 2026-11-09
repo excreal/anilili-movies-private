@@ -14,13 +14,34 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-internal enum class SiteDownloadProvider { DRAMATIP, KISS18, NARTO, EROTICMV, DIRECT }
-internal data class SiteDownloadEpisode(val id: String, val number: Int, val title: String, val url: String)
+internal enum class SiteDownloadProvider { DRAMATIP, KISS18, NARTO, EROTICMV, KISSKH, DIRECT }
+internal val SiteDownloadProvider.isShortDrama get() = this in setOf(SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.KISS18, SiteDownloadProvider.NARTO)
+internal val SiteDownloadProvider.contentLabel get() = when { isShortDrama -> "Short drama"; this == SiteDownloadProvider.EROTICMV -> "Movie"; this == SiteDownloadProvider.KISSKH -> "K-drama"; else -> "Video" }
+internal data class SiteDownloadEpisode(val id: String, val number: Int, val title: String, val url: String, val numberLabel: String? = null)
+internal val SiteDownloadEpisode.displayNumber get() = numberLabel ?: number.toString()
+internal data class SiteShowImage(val url: String, val role: String, val width: Int? = null, val height: Int? = null, val caption: String? = null)
+internal data class SiteShowTerm(val name: String, val id: String? = null, val url: String? = null)
+internal data class SiteShowRating(val value: Double? = null, val scale: Double? = null, val votes: Long? = null, val source: String? = null, val label: String? = null)
+internal data class SiteShowPerson(val name: String, val role: String? = null, val url: String? = null)
+internal data class SiteEpisodeMetadata(val number: String, val title: String, val description: String? = null,
+    val durationSeconds: Long? = null, val releaseDate: String? = null, val subtitles: List<String> = emptyList(),
+    val attributes: Map<String, String> = emptyMap())
+internal data class SiteShowMetadata(val description: String? = null, val alternativeTitles: List<String> = emptyList(),
+    val images: List<SiteShowImage> = emptyList(), val genres: List<String> = emptyList(), val categories: List<String> = emptyList(),
+    val tags: List<String> = emptyList(), val genreTerms: List<SiteShowTerm> = emptyList(),
+    val categoryTerms: List<SiteShowTerm> = emptyList(), val tagTerms: List<SiteShowTerm> = emptyList(),
+    val ratings: List<SiteShowRating> = emptyList(), val people: List<SiteShowPerson> = emptyList(),
+    val countries: List<String> = emptyList(), val languages: List<String> = emptyList(), val studios: List<String> = emptyList(),
+    val status: String? = null, val format: String? = null, val year: Int? = null, val episodeCount: Int? = null,
+    val durationSeconds: Long? = null, val releaseDate: String? = null, val updatedAt: String? = null,
+    val externalIds: Map<String, String> = emptyMap(), val attributes: Map<String, String> = emptyMap(),
+    val episodes: List<SiteEpisodeMetadata> = emptyList())
 internal data class SiteDownloadSeries(val provider: SiteDownloadProvider, val id: String, val title: String,
-    val poster: String, val url: String, val episodes: List<SiteDownloadEpisode>, val qualities: List<String> = listOf("Best"))
+    val poster: String, val url: String, val episodes: List<SiteDownloadEpisode>, val qualities: List<String> = listOf("Best"),
+    val description: String = "", val metadata: SiteShowMetadata? = null)
 internal val SiteDownloadSeries.isSingleVideo get() = provider in setOf(SiteDownloadProvider.DIRECT, SiteDownloadProvider.EROTICMV)
 internal data class DramaVariant(val url: String, val quality: String = "Original", val backupUrls: List<String> = emptyList(),
-    val mimeType: String = "video/mp4", val headers: Map<String, String> = emptyMap(), val width: Int = 0, val height: Int = 0)
+    val mimeType: String = "video/mp4", val headers: Map<String, String> = emptyMap(), val width: Int = 0, val height: Int = 0, val subtitles: List<MediaSubtitle> = emptyList())
 
 internal fun dramaHost(host: String, domain: String) = host == domain || host.endsWith(".$domain")
 internal fun siteDownloadInput(raw: String): HttpUrl {
@@ -35,8 +56,9 @@ internal fun siteDownloadProvider(url: HttpUrl): SiteDownloadProvider = when {
     url.host in setOf("kiss18.vip", "www.kiss18.vip") -> SiteDownloadProvider.KISS18
     url.host in setOf("narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com") -> SiteDownloadProvider.NARTO
     dramaHost(url.host, "eroticmv.com") -> SiteDownloadProvider.EROTICMV
+    url.host in setOf("kisskh.do", "www.kisskh.do") -> SiteDownloadProvider.KISSKH
     isDramaHls(url) || isDramaFile(url) -> SiteDownloadProvider.DIRECT
-    else -> throw IOException("Unsupported link. Use Dramatip, Kiss18, Narto Drama, EroticMV, or a direct HLS/MP4/WebM URL.")
+    else -> throw IOException("Unsupported link. Use Dramatip, Kiss18, Narto Drama, EroticMV, KissKH, or a direct HLS/MP4/WebM URL.")
 }
 internal fun isDramaHls(url: HttpUrl) = url.encodedPath.contains(".m3u8", true)
 internal fun isDramaFile(url: HttpUrl) = listOf(".mp4", ".m4v", ".webm").any { url.encodedPath.endsWith(it, true) } ||
@@ -62,6 +84,20 @@ internal fun parseSiteDownloadSelection(input: String, episodes: List<SiteDownlo
     val selection = input.trim()
     if (selection.isBlank()) return episodes
     if (selection.equals("none", true)) return emptyList()
+    require(!selection.trimStart().startsWith(',') && !selection.trimEnd().endsWith(',') && !Regex(",\\s*,").containsMatchIn(selection)) {
+        "Episode selections cannot contain empty items."
+    }
+    if (episodes.any { it.numberLabel != null }) {
+        val labels = episodes.associateWith { it.displayNumber.toBigDecimal() }
+        val selected = linkedSetOf<SiteDownloadEpisode>()
+        selection.replace(Regex("\\s*-\\s*"), "-").split(Regex("[,\\s]+")).forEach { token ->
+            val range = token.split('-').map { it.toBigDecimalOrNull() ?: throw IOException("Use episode numbers or ranges, such as 1-5,9.") }
+            require(range.size in 1..2 && range.first() <= range.last()) { "Invalid episode selection." }
+            require(labels.values.any { it.compareTo(range.first()) == 0 } && labels.values.any { it.compareTo(range.last()) == 0 }) { "This episode is unavailable." }
+            selected += episodes.filter { labels.getValue(it) >= range.first() && labels.getValue(it) <= range.last() }
+        }
+        return episodes.filter { it in selected }
+    }
     val available = episodes.map { it.number }.toSet()
     val numbers = mutableSetOf<Int>()
     for (token in selection.replace(Regex("\\s*-\\s*"), "-").split(Regex("[,\\s]+"))) {
@@ -113,7 +149,7 @@ internal fun parseDramaSeries(html: String, url: HttpUrl, provider: SiteDownload
         }
     }
     if (episodes.isEmpty()) throw IOException("The provider returned no available episodes.")
-    return SiteDownloadSeries(provider, "${provider.name}:$slug", title, poster, url.toString(), episodes.values.toList())
+    return SiteDownloadSeries(provider, "${provider.name}:$slug", title, poster, url.toString(), episodes.values.toList(), description = Jsoup.parse(html).selectFirst("meta[property=og:description],meta[name=description]")?.attr("content").orEmpty())
 }
 internal fun dramaJsonAfter(text: String, marker: Regex): JsonElement? {
     val match = marker.find(text) ?: return null

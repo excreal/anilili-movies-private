@@ -1,1 +1,1 @@
-<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/launcher_foreground_art" android:inset="18%" />
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/splash_mark" android:inset="18%" />

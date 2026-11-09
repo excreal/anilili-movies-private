@@ -3,6 +3,7 @@ import java.security.MessageDigest
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
     alias(libs.plugins.ksp)
 }
 
@@ -54,10 +55,26 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:${libs.versions.okhttp.get()}")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.media3:media3-transformer:${libs.versions.media3.get()}")
+    implementation("androidx.media3:media3-session:${libs.versions.media3.get()}")
+    implementation("androidx.media3:media3-exoplayer-dash:${libs.versions.media3.get()}")
+    implementation("androidx.media3:media3-datasource-cronet:${libs.versions.media3.get()}")
+    implementation("androidx.media3:media3-cast:${libs.versions.media3.get()}")
+    implementation("com.google.android.gms:play-services-cronet:18.0.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
+    implementation("com.materialkolor:material-color-utilities:2.1.1")
+    implementation("androidx.compose.material:material:1.7.6")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.19.0")
+    implementation("androidx.compose.material:material-icons-extended:1.7.6")
+    implementation("dev.chrisbanes.haze:haze:1.2.2")
     implementation(libs.work.runtime)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
@@ -69,6 +86,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.media3.common)
     implementation(libs.media3.exoplayer)
+    implementation("androidx.media3:media3-ui:${libs.versions.media3.get()}")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:${libs.versions.lifecycleRuntimeKtx.get()}")
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.datasource.okhttp)
     implementation(platform(libs.androidx.compose.bom))
@@ -80,6 +99,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
+    testImplementation("com.squareup.okhttp3:mockwebserver:${libs.versions.okhttp.get()}")
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

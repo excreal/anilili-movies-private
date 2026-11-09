@@ -23,3 +23,13 @@
 -keep class com.example.animepahedl.SiteDownloadSeries { *; }
 -keep class com.example.animepahedl.SiteDownloadEpisode { *; }
 -keep enum com.example.animepahedl.SiteDownloadProvider { *; }
+
+-keep class fr.acinq.secp256k1.** { *; }
+-dontwarn fr.acinq.secp256k1.**
+-keep class com.example.animepahedl.Announcement { *; }
+-keep class com.example.animepahedl.AnnouncementWorker { *; }
+
+# Persisted host subtitle metadata and the source player's media-session service entry points.
+-keep class com.example.animepahedl.MediaSubtitle { *; }
+-keep class com.anilili.playback.PlaybackService { *; }
+-keep class com.anilili.playback.LocalStreamProxyService { *; }

@@ -621,7 +621,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
                     downloads = updated
                     episodeStates = updated.associateBy { it.showId to it.episodeId }
                 }
-                selectedDownloadIds = selectedDownloadIds.intersect(updated.map { it.id }.toSet())
+                selectedDownloadIds = selectedDownloadIds.filter { it.startsWith("preparing:") || updated.any { row -> row.id == it } }.toSet()
                 checkMediaVerification()
                 loadMissingArtwork()
                 refreshStorageUsage()
@@ -792,21 +792,6 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         viewModelScope.launch {
             try {
             DownloadStore.awaitReady()
-            launch { PreparationJobs.observe(app, PreparationJobs.ANIME).collect { status ->
-                val before = pendingPreparation
-                val pending = PreparationJobs.payload(PreparationJobs.ANIME)?.let {
-                    runCatching { com.google.gson.Gson().fromJson(it, PreparationRecord::class.java) }.getOrNull()
-                }
-                if (before != null && selectedAnime?.session == before.anime.session &&
-                    DownloadStore.operations("preparation-generation")[PreparationJobs.ANIME] != null) {
-                    val finished = before.episodes.map { it.session }.toSet() - pending?.episodes.orEmpty().map { it.session }.toSet()
-                    selectedEpisodes = selectedEpisodes - finished
-                }
-                pendingPreparation = pending
-                preparationStatus = status
-                resolving = status.automatic
-                resolvingLabel = status.label
-            } }
             withContext(Dispatchers.IO) { OfflineDownloads.prepareCache(app) }
             withContext(Dispatchers.IO) { reconcileDirectEnqueues(app) }
             val manager = OfflineDownloads.manager(app)

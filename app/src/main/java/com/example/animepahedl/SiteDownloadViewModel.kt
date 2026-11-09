@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.example.animepahedl.metadata.SiteMetadataApis
+import com.example.animepahedl.metadata.toAppMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,9 +20,12 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     private val app = application
     private val cookies = SiteDownloadCookieStore(application)
     private val repository = SiteDownloadRepository(cookieHeader = cookies::headerFor)
+    private val metadataApis by lazy { SiteMetadataApis.forApp(application) }
     private val gson = Gson()
     private var inspectJob: Job? = null
+    private var metadataJob: Job? = null
     private var generation = 0
+    private var submitting = false
     var input by mutableStateOf("")
         private set
     var series by mutableStateOf<SiteDownloadSeries?>(null)
@@ -63,18 +68,10 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
                 }
                 ready = true
                 PreparationJobs.observe(app, PreparationJobs.SITES).collect { status ->
-                    val before = pending
                     val remaining = PreparationJobs.payload(PreparationJobs.SITES)?.let {
                         runCatching { gson.fromJson(it, SiteDownloadPreparation::class.java) }.getOrNull()
                     }
-                    if (before != null && series?.id == before.series.id &&
-                        DownloadStore.operations("preparation-generation")[PreparationJobs.SITES] != null) {
-                        val completed = before.episodes.map { it.id }.toSet() - remaining?.episodes.orEmpty().map { it.id }.toSet()
-                        if (completed.isNotEmpty()) {
-                            val selected = selectedEpisodes.filterNot { it.id in completed }
-                            updateSelection(if (selected.isEmpty()) "none" else selected.joinToString(",") { it.number.toString() })
-                        }
-                    }
+                    if (submitting && remaining == null) return@collect
                     pending = remaining
                     preparationStatus = status
                     preparing = status.automatic
@@ -84,9 +81,23 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    fun libraryRows(actual: List<DownloadRow>): List<DownloadRow> = mergePreparedQueueRows(actual, pending, preparationStatus)
+    fun isPendingRow(id: String) = isPreparedQueueRow(id)
+    fun pausePending(id: String) { if (isPendingRow(id)) pausePreparation() }
+    fun resumePending(id: String) { if (isPendingRow(id)) resumePreparation() }
+    fun removePending(ids: Set<String>) {
+        if (ids.none(::isPreparedQueueRow)) return
+        viewModelScope.launch {
+            try { PreparationJobs.removeSiteEpisodes(app, ids) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { error = "Could not remove queued episodes. Try again." }
+        }
+    }
+
     fun updateInput(value: String) {
         generation++
         inspectJob?.cancel()
+        metadataJob?.cancel()
         inspecting = false
         input = value
         series = null
@@ -111,6 +122,15 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
                 ensureActive()
                 if (generation == current) {
                     series = result
+                    metadataJob?.cancel()
+                    if (result.provider != SiteDownloadProvider.DIRECT) metadataJob = viewModelScope.launch {
+                        try {
+                            val metadata = metadataApis.forProvider(result.provider).details(request).toAppMetadata()
+                            ensureActive()
+                            if (generation == current && series?.id == result.id) series = result.copy(metadata = metadata)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { /* A metadata challenge must not block playback or downloads. */ }
+                    }
                     quality = "Best"
                     val requestedEpisode = runCatching {
                         dramaRoute(siteDownloadInput(request), result.provider).second
@@ -140,7 +160,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         val ids = selectedEpisodes.map { it.id }.toMutableSet()
         if (!ids.add(episode.id)) ids.remove(episode.id)
         val selected = series?.episodes.orEmpty().filter { it.id in ids }
-        updateSelection(if (selected.isEmpty()) "none" else selected.joinToString(",") { it.number.toString() })
+        updateSelection(if (selected.isEmpty()) "none" else selected.joinToString(",") { it.displayNumber })
     }
     fun saveCookies(input: String): Boolean = try {
         cookies.save(input)
@@ -151,6 +171,11 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     fun clearCookies() { cookies.clear(); hasCookies = false; notice = "Session cookies removed." }
     fun dismissNotice() { notice = null }
     fun dismissError() { error = null }
+    fun downloadEpisode(show: SiteDownloadSeries, episode: SiteDownloadEpisode, selectedQuality: String = "Best"): Boolean {
+        if (!ready || preparing || discarding || pending != null) return false
+        runPreparation(SiteDownloadPreparation(show, listOf(episode), selectedQuality))
+        return true
+    }
     fun downloadSelected() {
         val preview = series ?: return
         if (!ready || preparing || discarding || pending != null || selectionError != null || selectedEpisodes.isEmpty()) return
@@ -179,11 +204,20 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     private fun runPreparation(record: SiteDownloadPreparation) {
         if (preparing || discarding || !ready) return
         preparing = true
+        submitting = true
+        pending = record
+        preparationStatus = PreparationStatus(pending = true, label = "${record.episodes.size} queued · preparing links in background", totalSelected = record.episodes.size)
         error = null
         viewModelScope.launch {
             try { PreparationJobs.submit(app, PreparationJobs.SITES, record) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { preparing = false; error = "Could not schedule preparation. Your selection is kept." }
+            catch (_: Exception) {
+                preparing = false
+                pending = PreparationJobs.payload(PreparationJobs.SITES)?.let {
+                    runCatching { gson.fromJson(it, SiteDownloadPreparation::class.java) }.getOrNull()
+                }
+                error = "Could not schedule preparation. Your selection is kept."
+            } finally { submitting = false }
         }
     }
 }

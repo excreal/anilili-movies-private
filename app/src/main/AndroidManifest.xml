@@ -10,7 +10,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
     <application
+        android:networkSecurityConfig="@xml/network_security_config"
         android:name=".AnimeApplication"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
@@ -21,6 +25,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.AnimepaheDL">
+        <service android:name="com.anilili.playback.PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback">
+            <intent-filter><action android:name="androidx.media3.session.MediaSessionService" /></intent-filter>
+        </service>
+        <service android:name="com.anilili.playback.LocalStreamProxyService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
+        <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME" android:value="androidx.media3.cast.DefaultCastOptionsProvider" />
+        <receiver android:name="androidx.mediarouter.media.MediaTransferReceiver" android:exported="true" />
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.fileprovider" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/reference_player_paths" />
+        </provider>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge" />
         <service
@@ -37,6 +50,8 @@
         </receiver>
         <activity
             android:name=".MainActivity"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTop"
             android:exported="true"
             android:theme="@style/Theme.AnimepaheDL"

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="imported-subtitles" path="external-subtitles/" />
+    <files-path name="provider-subtitles" path="provider-subtitles/" />
+    <files-path name="download-subtitles" path="episode-download-subtitles/" />
+</paths>
