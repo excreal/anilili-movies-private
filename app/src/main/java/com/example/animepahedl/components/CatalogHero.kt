@@ -12,6 +12,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -21,6 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.graphicsLayer
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import com.example.animepahedl.CatalogItem
@@ -46,8 +49,17 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
             val context = LocalContext.current
             val artwork = remember(context, item.poster, item.url) { catalogArtworkRequest(context, item) }
             Box(Modifier.fillMaxSize().clickable(onClickLabel = "Open ${item.title}") { onOpen(item.url) }) {
-                AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
-                    contentScale = ContentScale.Crop, alignment = Alignment.Center, modifier = Modifier.fillMaxSize())
+                if (item.wideArtwork) {
+                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
+                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                            .graphicsLayer { scaleX = 1.18f; scaleY = 1.18f }.blur(26.dp).alpha(.5f))
+                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
+                        contentScale = ContentScale.Fit, alignment = Alignment.Center,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.Center))
+                } else {
+                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
+                        contentScale = ContentScale.Crop, alignment = Alignment.Center, modifier = Modifier.fillMaxSize())
+                }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = .30f), .42f to Color.Black.copy(alpha = .12f),
                     .72f to Color.Black.copy(alpha = .45f), 1f to canvas,

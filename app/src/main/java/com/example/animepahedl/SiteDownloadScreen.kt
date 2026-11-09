@@ -221,14 +221,16 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
     val backdrop = series.metadata?.images?.firstOrNull { it.role in setOf("banner", "backdrop", "featured_artwork") }?.url ?: series.poster
     val poster = series.posterThumbnail()
     val bannerArtwork = series.provider == SiteDownloadProvider.KISSKH
-    Box(Modifier.fillMaxWidth().height(286.dp)) {
+    Box(Modifier.fillMaxWidth().height(318.dp)) {
         AsyncImage(model = backdrop, imageLoader = images, contentDescription = null,
-            modifier = Modifier.fillMaxWidth().height(190.dp), contentScale = ContentScale.Crop)
-        Box(Modifier.fillMaxWidth().height(190.dp).background(Brush.verticalGradient(listOf(Color.Transparent, canvas))))
+            modifier = Modifier.fillMaxWidth().height(230.dp).offset(y = 10.dp), contentScale = ContentScale.Crop,
+            alignment = Alignment.BottomCenter)
+        Box(Modifier.fillMaxWidth().height(240.dp).offset(y = 10.dp)
+            .background(Brush.verticalGradient(listOf(Color.Transparent, canvas))))
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Bottom) {
             Thumbnail(poster, series.title, images,
-                Modifier.width(if (bannerArtwork) 120.dp else 108.dp)
+                Modifier.width(if (bannerArtwork) 140.dp else 116.dp)
                     .aspectRatio(if (bannerArtwork) 16f / 9f else 2f / 3f).clip(RoundedCornerShape(12.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)))
             Column(Modifier.weight(1f).padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

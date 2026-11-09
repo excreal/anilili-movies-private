@@ -70,7 +70,7 @@ internal fun CatalogPosterCard(
                 onSuccess = { failed = false },
                 imageLoader = images,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = if (item.wideArtwork) ContentScale.Fit else ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         }
