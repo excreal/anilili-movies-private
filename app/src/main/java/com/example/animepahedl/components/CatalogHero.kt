@@ -50,17 +50,14 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
             val context = LocalContext.current
             val artwork = remember(context, item.poster, item.url) { catalogArtworkRequest(context, item) }
             Box(Modifier.fillMaxSize().clickable(onClickLabel = "Open ${item.title}") { onOpen(item.url) }) {
-                if (item.wideArtwork) {
-                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
-                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
-                            .graphicsLayer { scaleX = 1.18f; scaleY = 1.18f }.blur(26.dp).alpha(.5f))
-                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
-                        contentScale = ContentScale.Fit, alignment = Alignment.Center,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.Center))
-                } else {
-                    AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
-                        contentScale = ContentScale.Crop, alignment = Alignment.Center, modifier = Modifier.fillMaxSize())
-                }
+                AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                        .graphicsLayer { scaleX = 1.18f; scaleY = 1.18f }.blur(26.dp).alpha(.5f))
+                // Every source uses the same landscape hero stage; portrait posters stay whole
+                // in the center while the blurred artwork supplies a quiet, full-bleed backdrop.
+                AsyncImage(model = artwork, imageLoader = images, contentDescription = null,
+                    contentScale = ContentScale.Fit, alignment = Alignment.Center,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.Center))
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = .30f), .42f to Color.Black.copy(alpha = .12f),
                     .72f to Color.Black.copy(alpha = .45f), 1f to canvas,
