@@ -41,9 +41,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import com.anilili.ui.theme.LocalAppColors
-import com.anilili.ui.theme.ThemeSpec
-import com.anilili.ui.theme.appColors
-import com.anilili.ui.theme.wallpaperSeed
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -84,7 +81,7 @@ internal fun DramaPlayerSurface(
     if (episodes.isEmpty()) { LaunchedEffect(Unit) { onClose() }; return }
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
-    val playerColors = remember(context) { appColors(ThemeSpec(), wallpaperSeed(context)) }
+    val playerColors = LocalAppColors.current
     val history = remember(context) { PlaybackHistory(context) }
     val playbackPreferences = remember(context) { context.getSharedPreferences("app-settings", android.content.Context.MODE_PRIVATE) }
     val playOnOpen = remember { playbackPreferences.getBoolean("play-on-open", true) }
@@ -205,7 +202,7 @@ internal fun DramaPlayerSurface(
         }
     }
     LaunchedEffect(playing, chooser, controlsVisible, scrubbing, interaction, foreground, loading, error) {
-        if (!playing || loading || error != null) controlsVisible = true
+        if (loading || error != null) controlsVisible = true
         else if (!chooser && !scrubbing && controlsVisible && foreground) {
             delay(3_000)
             controlsVisible = false
@@ -233,6 +230,8 @@ internal fun DramaPlayerSurface(
                     })
                     if (loading && error == null) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
                     else if (!playing && error == null) FilledIconButton(onClick = {
+                        interaction++
+                        controlsVisible = true
                         if (player?.playbackState == Player.STATE_ENDED) player.seekTo(0)
                         player?.play()
                     }, modifier = Modifier.size(56.dp), colors = IconButtonDefaults.filledIconButtonColors(
@@ -257,7 +256,7 @@ internal fun DramaPlayerSurface(
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             CompositionLocalProvider(LocalContentColor provides Color.White) {
-                IconButton(onClick = ::close, modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
+                IconButton(onClick = ::close, modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
                     AppSymbol(AppIcon.Back, description = "Back")
                 }
             }
@@ -267,7 +266,7 @@ internal fun DramaPlayerSurface(
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             onToggleSave?.let { toggle ->
                 IconButton(onClick = { interaction++; toggle() }, colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White),
-                    modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
                     AppSymbol(if (saved) AppIcon.BookmarkFilled else AppIcon.Bookmark, description = if (saved) "Unsave show" else "Save show")
                 }
             }
@@ -345,7 +344,7 @@ private fun PlayerSeekControls(player: ExoPlayer, playedColor: Color, onScrub: (
     fun seek(value: Float) {
         if (latestDuration > 0) player.seekTo((value.coerceIn(0f, 1f) * latestDuration).toLong())
     }
-    Canvas(Modifier.fillMaxWidth().height(44.dp)
+    Canvas(Modifier.fillMaxWidth().height(48.dp)
         .semantics {
             contentDescription = "Video position"
             progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)

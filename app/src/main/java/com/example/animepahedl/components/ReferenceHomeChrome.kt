@@ -30,7 +30,7 @@ internal fun ReferenceHomeChrome(model: CatalogViewModel, backdrop: HazeState?, 
                 IconButton(onClick = onLink) { AppSymbol(AppIcon.More, description = "Open a video link") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(CatalogSource.entries, key = { it.name }) { source ->
+            items(model.availableSources, key = { it.name }) { source ->
                 val selected = model.source == source
                 val shape = RoundedCornerShape(50)
                 val frosted = !selected && backdrop != null && backdropBlurAvailable

@@ -12,6 +12,61 @@ import java.nio.charset.StandardCharsets
 
 internal enum class CatalogSource(val label: String) { DRAMATIP("Dramatip"), KISS18("Kiss18"), NARTO("Narto Drama"), EROTICMV("EroticMV"), KISSKH("KissKH · K-drama") }
 
+internal data class CatalogSourceOrder(val order: List<CatalogSource>, val enabled: Set<CatalogSource>)
+
+/** User-owned order and visibility for the source pills shown on Home and Browse. */
+internal object CatalogSourcePreferences {
+    private const val FILE = "catalog-sources"
+    private const val ORDER = "order"
+    private const val DISABLED = "disabled"
+    private var prefs: android.content.SharedPreferences? = null
+    private val defaults get() = CatalogSourceOrder(CatalogSource.entries, CatalogSource.entries.toSet())
+    val state = kotlinx.coroutines.flow.MutableStateFlow(defaults)
+
+    @Synchronized fun attach(context: android.content.Context) {
+        if (prefs != null) return
+        prefs = context.applicationContext.getSharedPreferences(FILE, android.content.Context.MODE_PRIVATE)
+        val stored = prefs ?: return
+        val order = (stored.getString(ORDER, null)?.split(',').orEmpty().mapNotNull { raw ->
+            CatalogSource.entries.firstOrNull { it.name == raw }
+        } + CatalogSource.entries).distinct()
+        val disabled = stored.getStringSet(DISABLED, emptySet()).orEmpty()
+            .mapNotNullTo(mutableSetOf()) { raw -> CatalogSource.entries.firstOrNull { it.name == raw } }
+        val enabled = CatalogSource.entries.filterNotTo(linkedSetOf()) { it in disabled }
+        if (enabled.isEmpty()) enabled += CatalogSource.entries.first()
+        state.value = CatalogSourceOrder(order, enabled)
+        persist(state.value)
+    }
+
+    @Synchronized fun move(source: CatalogSource, offset: Int) {
+        val current = state.value
+        val from = current.order.indexOf(source)
+        val to = (from + offset).coerceIn(current.order.indices)
+        if (from < 0 || from == to) return
+        val order = current.order.toMutableList().apply { add(to, removeAt(from)) }
+        publish(current.copy(order = order))
+    }
+
+    @Synchronized fun setEnabled(source: CatalogSource, enabled: Boolean) {
+        val current = state.value
+        val updated = current.enabled.toMutableSet().apply { if (enabled) add(source) else remove(source) }
+        if (updated.isEmpty()) return
+        publish(current.copy(enabled = updated))
+    }
+
+    private fun publish(value: CatalogSourceOrder) {
+        state.value = value
+        persist(value)
+    }
+
+    private fun persist(value: CatalogSourceOrder) {
+        prefs?.edit()
+            ?.putString(ORDER, value.order.joinToString(",") { it.name })
+            ?.putStringSet(DISABLED, CatalogSource.entries.filterNot { it in value.enabled }.mapTo(mutableSetOf()) { it.name })
+            ?.apply()
+    }
+}
+
 private const val MAX_CATALOG_CACHE_BYTES = 4_000_000L
 
 /** Serialize the complete loaded prefix or decline to cache it; a shortened prefix cannot keep a tail cursor. */
@@ -35,7 +90,9 @@ internal fun catalogFailureState(
 
 internal class CatalogViewModel(application: Application) : AndroidViewModel(application) {
     private val cookies = SiteDownloadCookieStore(application)
-    var source by mutableStateOf(CatalogSource.DRAMATIP); private set
+    private val sourcePreferences = CatalogSourcePreferences.also { it.attach(application) }
+    var availableSources by mutableStateOf(sourcePreferences.state.value.order.filter { it in sourcePreferences.state.value.enabled }); private set
+    var source by mutableStateOf(availableSources.firstOrNull() ?: CatalogSource.DRAMATIP); private set
     var query by mutableStateOf(""); private set
     var items by mutableStateOf(emptyList<CatalogItem>()); private set
     var loading by mutableStateOf(false); private set
@@ -79,8 +136,21 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         CatalogSource.KISSKH -> KisskhCatalog(application.cacheDir, cookies::headerFor)
     } } }
     private fun api(): SiteCatalog = adapters.getValue(source)
-    init { load(false) }
-    fun select(value: CatalogSource) { if (source == value) return; source = value; query = ""; activeFilter = null; filterLabel = null; load(false) }
+    init {
+        load(false)
+        viewModelScope.launch {
+            sourcePreferences.state.collect { settings ->
+                availableSources = settings.order.filter { it in settings.enabled }
+                if (source !in settings.enabled) {
+                    val replacement = availableSources.firstOrNull() ?: CatalogSource.DRAMATIP
+                    if (source != replacement) {
+                        source = replacement; query = ""; activeFilter = null; filterLabel = null; load(false)
+                    }
+                }
+            }
+        }
+    }
+    fun select(value: CatalogSource) { if (source == value || value !in availableSources) return; source = value; query = ""; activeFilter = null; filterLabel = null; load(false) }
     fun edit(value: String) { activeFilter = null; filterLabel = null; query = value; load(false, 400) }
     fun explore(provider: SiteDownloadProvider, kind: String, term: SiteShowTerm) {
         val mapped = when (provider) {

@@ -78,8 +78,8 @@ internal fun CatalogScreen(
             Column(Modifier.fillMaxWidth()) {
             Text("Sources", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(CatalogSource.entries, key = { it.name }) { source ->
-                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
+                items(model.availableSources, key = { it.name }) { source ->
+                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, containerColor = if (model.source == source) Color.White.copy(alpha = .12f) else Color.Transparent)) { Text(source.label) }
                 }
             }
@@ -111,7 +111,7 @@ internal fun CatalogScreen(
     }
     if (filters) ModalBottomSheet(onDismissRequest = { filters = false }) {
         Text("Source", Modifier.padding(20.dp), style = MaterialTheme.typography.titleLarge)
-        CatalogSource.entries.forEach { source ->
+        model.availableSources.forEach { source ->
             TextButton(onClick = { model.select(source); filters = false }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 RadioButton(selected = model.source == source, onClick = null)
                 Spacer(Modifier.width(12.dp)); Text(source.label, Modifier.weight(1f))
@@ -124,7 +124,7 @@ internal fun CatalogScreen(
 @Composable
 private fun RemoteSourceChips(model: CatalogViewModel) {
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(CatalogSource.entries, key = { it.name }) { source ->
+        items(model.availableSources, key = { it.name }) { source ->
             FilterChip(selected = model.source == source, onClick = { model.select(source) }, label = { Text(source.label) }, shape = androidx.compose.foundation.shape.CircleShape,
                 colors = FilterChipDefaults.filterChipColors(containerColor = Color.Black.copy(alpha = .82f), labelColor = Color.White,
                     selectedContainerColor = Color.White, selectedLabelColor = Color.Black),

@@ -30,6 +30,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.anilili.data.settings.SettingsStore
+import com.anilili.data.settings.ThemePreset
 
 internal fun friendlyDownloadStatus(status: String): String = when (status) {
     "Downloading HLS", "Downloading file" -> "Downloading"
@@ -364,6 +369,8 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
     var diagnosticPreview by remember { mutableStateOf<String?>(null) }
     var exportingDiagnostic by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val catalogSourcePreferences = remember(context) { CatalogSourcePreferences.also { it.attach(context) } }
+    val catalogSourceOrder by catalogSourcePreferences.state.collectAsState()
     val scope = rememberCoroutineScope()
     val diagnosticPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         val contents = exportingDiagnostic
@@ -389,6 +396,10 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
         dismissButton = { TextButton(onClick = { diagnosticPreview = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_cancel)) } }) }
     var choice by remember { mutableStateOf<String?>(null) }
     var section by rememberSaveable { mutableStateOf<String?>(null) }
+    val themeBackground by SettingsStore.themeBackground.collectAsState()
+    val themeAccent by SettingsStore.themeAccent.collectAsState()
+    val themeStyle by SettingsStore.themeStyle.collectAsState()
+    val themeContrast by SettingsStore.themeContrast.collectAsState()
     androidx.activity.compose.BackHandler(enabled = section != null) { section = null }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -421,12 +432,58 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
                 "notifications" -> { item { NotificationPreferences() } }
                 "subtitles" -> { item { ProviderSubtitleSettings() } }
                 "servers" -> {
-                    item { Text("Available sources", style = MaterialTheme.typography.titleMedium) }
-                    items(listOf("Dramatip", "Kiss18", "Narto Drama", "EroticMV", "KissKH · K-drama")) { Text(it, Modifier.fillMaxWidth().padding(vertical = 16.dp)) }
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Sources shown on Home and Browse", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Reorder the source chips or hide sources you don’t use.",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    items(catalogSourceOrder.order, key = { it.name }) { source ->
+                        val index = catalogSourceOrder.order.indexOf(source)
+                        val enabled = source in catalogSourceOrder.enabled
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(source.label, style = MaterialTheme.typography.titleSmall)
+                                    Text(if (enabled) "Position ${index + 1}" else "Hidden from Home and Browse",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked = enabled, onCheckedChange = { catalogSourcePreferences.setEnabled(source, it) })
+                            }
+                            Row {
+                                IconButton(onClick = { catalogSourcePreferences.move(source, -1) }, enabled = index > 0) {
+                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${source.label} up")
+                                }
+                                IconButton(onClick = { catalogSourcePreferences.move(source, 1) }, enabled = index < catalogSourceOrder.order.lastIndex) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${source.label} down")
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
                     item { SettingsRow(AppIcon.Shield, "Browser cookies", "Manage saved verification for video sources") { showSiteCookies = true } }
                 }
                 "accounts" -> { item { Text("Saved on this device", style = MaterialTheme.typography.titleMedium) }; item { Text("Your saved shows and viewing progress stay on this device.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-                "appearance" -> { item { Text("AMOLED", style = MaterialTheme.typography.titleMedium) }; item { Text("Black background with monochrome controls.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                "appearance" -> {
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Theme", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Choose a color theme for the app. It updates immediately.",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                ThemePreset.entries.forEach { preset ->
+                                    FilterChip(
+                                        selected = preset.matches(themeBackground, themeAccent, themeStyle, themeContrast),
+                                        onClick = { SettingsStore.applyThemePreset(preset) },
+                                        label = { Text(preset.label) },
+                                    )
+                                }
+                            }
+                            OutlinedButton(onClick = SettingsStore::resetTheme) { Text("Reset theme") }
+                        }
+                    }
+                }
                 "content" -> { item { Text("Short dramas, K-dramas and movies", style = MaterialTheme.typography.titleMedium) }; item { Text("Choose a source from Home or Browse to explore its catalog.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                 "data" -> {
                     item { Text("Temporary storage: ${Formatter.formatShortFileSize(context, model.temporaryBytes)}", Modifier.padding(vertical = 12.dp)) }

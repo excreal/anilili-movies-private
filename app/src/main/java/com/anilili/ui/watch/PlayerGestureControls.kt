@@ -67,9 +67,12 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.anilili.data.settings.MIN_PLAYER_BRIGHTNESS
 import com.anilili.data.settings.PLAYER_BRIGHTNESS_FOLLOW_SYSTEM
 import com.anilili.data.settings.SettingsStore
@@ -102,11 +105,10 @@ private data class SeekGesture(
 private const val SEEK_MS_PER_SCREEN = 120_000L
 
 /**
- * Touch-gesture overlay shared by the native and embed players. A vertical drag anywhere in the
- * left half of the screen scrubs brightness (the Activity window's `screenBrightness`); anywhere
- * in the right half it scrubs volume (the media audio stream, which both ExoPlayer and the WebView
- * route through). A transient slider indicator shows the level while dragging. A horizontal drag
- * anywhere on the picture previews a relative seek and commits it when the finger is released.
+ * Touch-gesture overlay shared by the native and embed players. A vertical drag in the left or
+ * right half scrubs brightness or volume, except in Android's system-gesture edges and the top
+ * shade and bottom home strips. A transient slider indicator shows the level while dragging. A
+ * horizontal drag anywhere on the picture previews a relative seek and commits it when released.
  *
  * Taps and double-taps are handled here too so a single pointer handler owns the surface: the drag
  * detector and the tap detectors can't be separate `pointerInput`s without one consuming the down
@@ -142,6 +144,7 @@ internal fun PlayerGestureControls(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val view = LocalView.current
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
@@ -178,12 +181,29 @@ internal fun PlayerGestureControls(
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(activity, audioManager, dragGestures, slideToSeek, holdSpeedEnabled, holdSpeed) {
+                .pointerInput(activity, view, audioManager, dragGestures, slideToSeek, holdSpeedEnabled, holdSpeed) {
                     val slop = viewConfiguration.touchSlop
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
-                        val zone = if (startsInShadePullStrip(down.position.y, SHADE_PULL_STRIP.toPx())) {
+                        val systemInsets = ViewCompat.getRootWindowInsets(view)
+                            ?.getInsets(WindowInsetsCompat.Type.systemGestures())
+                        val systemGestureStart = startsInSystemGestureStrip(
+                            xPx = down.position.x,
+                            yPx = down.position.y,
+                            widthPx = size.width.toFloat(),
+                            heightPx = size.height.toFloat(),
+                            sideStripPx = maxOf(
+                                systemInsets?.left?.toFloat() ?: 0f,
+                                systemInsets?.right?.toFloat() ?: 0f,
+                                SYSTEM_BACK_GESTURE_STRIP.toPx(),
+                            ),
+                            bottomStripPx = maxOf(
+                                systemInsets?.bottom?.toFloat() ?: 0f,
+                                SYSTEM_HOME_GESTURE_STRIP.toPx(),
+                            ),
+                        )
+                        val zone = if (startsInShadePullStrip(down.position.y, SHADE_PULL_STRIP.toPx()) || systemGestureStart) {
                             null
                         } else {
                             playerGestureZone(
@@ -459,8 +479,27 @@ internal const val DOUBLE_TAP_SEEK_MS = 10_000L
  */
 internal val SHADE_PULL_STRIP = 36.dp
 
+/** Keep level swipes clear of Android's edge-back and bottom-home gestures. */
+internal val SYSTEM_BACK_GESTURE_STRIP = 32.dp
+internal val SYSTEM_HOME_GESTURE_STRIP = 72.dp
+
 internal fun startsInShadePullStrip(yPx: Float, stripPx: Float): Boolean =
     yPx.isFinite() && stripPx > 0f && yPx < stripPx
+
+internal fun startsInSystemGestureStrip(
+    xPx: Float,
+    yPx: Float,
+    widthPx: Float,
+    heightPx: Float,
+    sideStripPx: Float,
+    bottomStripPx: Float,
+): Boolean {
+    if (!xPx.isFinite() || !yPx.isFinite() || !widthPx.isFinite() || !heightPx.isFinite() ||
+        widthPx <= 0f || heightPx <= 0f) return false
+    val side = sideStripPx.coerceAtLeast(0f).coerceAtMost(widthPx / 2f)
+    val bottom = bottomStripPx.coerceAtLeast(0f).coerceAtMost(heightPx)
+    return xPx < side || xPx >= widthPx - side || yPx >= heightPx - bottom
+}
 
 internal fun canStartHoldSpeed(enabled: Boolean, hasHandler: Boolean, speed: Float): Boolean =
     enabled && hasHandler && speed.isFinite() && speed > 0f

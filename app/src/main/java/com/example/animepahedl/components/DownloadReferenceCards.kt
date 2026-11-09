@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,14 +51,18 @@ internal fun DownloadReferenceSeriesCard(
             AsyncImage(model = series.artworkUrl, imageLoader = images, contentDescription = null,
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             ReferenceCornerBadge(series.countLabel, Modifier.align(Alignment.TopStart).padding(5.dp))
-            Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp).clip(CircleShape)
-                .background(Color.Black.copy(alpha = .6f)).clickable(onClick = if (selectionActive) onSelect else onRemoveSeries),
+            Box(Modifier.align(Alignment.TopEnd).size(48.dp)
+                .clickable(role = Role.Button,
+                    onClickLabel = if (selectionActive) "Select ${series.title}" else "Remove every video of ${series.title}",
+                    onClick = if (selectionActive) onSelect else onRemoveSeries),
                 contentAlignment = Alignment.Center) {
-                CompositionLocalProvider(LocalContentColor provides Color.White) {
-                    if (selectionActive && !selected) Canvas(Modifier.size(16.dp)) {
-                        drawCircle(Color.White, style = Stroke(width = 2.dp.toPx()))
-                    } else AppSymbol(if (selectionActive) AppIcon.Check else AppIcon.Delete,
-                        Modifier.size(16.dp), if (selectionActive) "Select ${series.title}" else "Remove every video of ${series.title}")
+                Box(Modifier.size(28.dp).clip(CircleShape).background(Color.Black.copy(alpha = .6f)), contentAlignment = Alignment.Center) {
+                    CompositionLocalProvider(LocalContentColor provides Color.White) {
+                        if (selectionActive && !selected) Canvas(Modifier.size(16.dp)) {
+                            drawCircle(Color.White, style = Stroke(width = 2.dp.toPx()))
+                        } else AppSymbol(if (selectionActive) AppIcon.Check else AppIcon.Delete,
+                            Modifier.size(16.dp), if (selectionActive) "Select ${series.title}" else "Remove every video of ${series.title}")
+                    }
                 }
             }
             if (series.bytesLabel.isNotBlank()) ReferenceCornerBadge(series.bytesLabel, Modifier.align(Alignment.BottomStart).padding(5.dp))

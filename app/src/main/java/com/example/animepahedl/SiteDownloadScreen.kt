@@ -132,7 +132,7 @@ internal fun SiteDownloadScreen(
                                 modifier = Modifier.clip(RoundedCornerShape(18.dp))
                                     .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface)
                                     .selectable(selected = active, role = Role.Tab, onClick = { episodesTab = value })
-                                    .padding(horizontal = 18.dp, vertical = 9.dp))
+                                    .padding(horizontal = 18.dp, vertical = 14.dp))
                         }
                     }
                 }
@@ -140,13 +140,18 @@ internal fun SiteDownloadScreen(
             if (!episodesTab) {
                 val overview = series.overviewText()
                 if (overview.isNotBlank()) item {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).animateContentSize()
-                        .clickable { overviewExpanded = !overviewExpanded }) {
+                    var overviewOverflows by remember(series.id, overview) { mutableStateOf(false) }
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).animateContentSize()) {
                         Text("Overview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(overview, Modifier.padding(top = 7.dp), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (overviewExpanded) Int.MAX_VALUE else 4,
-                            overflow = TextOverflow.Ellipsis)
-                        Text(if (overviewExpanded) "Show less" else "More", Modifier.padding(top = 5.dp), style = MaterialTheme.typography.labelLarge)
+                            overflow = TextOverflow.Ellipsis, onTextLayout = { overviewOverflows = it.hasVisualOverflow })
+                        if (overviewOverflows || overviewExpanded) {
+                            TextButton(onClick = { overviewExpanded = !overviewExpanded },
+                                modifier = Modifier.padding(top = 2.dp), contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
+                                Text(if (overviewExpanded) "Show less" else "More")
+                            }
+                        }
                     }
                 }
 
