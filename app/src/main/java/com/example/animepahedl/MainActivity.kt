@@ -136,7 +136,6 @@ class MainActivity : ComponentActivity() {
 private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader) {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val chromeBackdrop = remember { HazeState() }
-    val playbackScope = rememberCoroutineScope()
     var historyRevision by remember { mutableIntStateOf(0) }
     var openingPlayer by remember { mutableStateOf(false) }
     var playingSaved by remember { mutableStateOf<DownloadRow?>(null) }
@@ -340,22 +339,18 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
         val playlist = remember(initial.id, model.downloads, savedRecords) { savedDownloadPlaylist(initial, model.downloads, savedRecords) }
         val series = remember(playlist) { savedSeriesFromDownloads(playlist) }
         val fallbackSeries = remember(playlist, series) {
-            if (series == null) savedLandscapeFallbackFromDownloads(playlist, savedRecords) else null
+            if (series == null) savedPlaybackFallbackFromDownloads(playlist, savedRecords) else null
         }
-        val landscapeSeries = series?.takeIf { it.provider.usesReferencePlayer } ?: fallbackSeries
-        if (landscapeSeries != null) {
-            ReferenceVideoPlayer(landscapeSeries, "Best", onClose = { playingSaved = null; historyRevision++ },
+        val playbackSeries = series ?: fallbackSeries
+        if (playbackSeries != null) {
+            ReferenceVideoPlayer(playbackSeries, "Best", onClose = { playingSaved = null; historyRevision++ },
                 initialId = if (fallbackSeries != null) initial.id else initial.episodeId,
                 downloadedOnly = true, offlineRows = playlist.takeIf { fallbackSeries != null }, onDownload = ::downloadFromPlayer)
-        } else androidx.compose.ui.window.Dialog(onDismissRequest = { playingSaved = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            ShortDramaPlayer(playlist, initial.id, onClose = { playingSaved = null }, onExternal = { row ->
-                playingSaved = null
-                playbackScope.launch { openSavedVideo(context, row)?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show() } }
-            })
         }
     }
     playingRemote?.let { series ->
-        RemoteDramaPlayer(series, siteDownload.quality, onClose = { playingRemote = null; historyRevision++ }, startEpisodeId = remoteEpisode, onDownload = ::downloadFromPlayer)
+        ReferenceVideoPlayer(series, siteDownload.quality, onClose = { playingRemote = null; historyRevision++ },
+            initialId = remoteEpisode, onDownload = ::downloadFromPlayer)
     }
     referenceRequest?.let { request -> ReferenceVideoPlayer(request.series, "Best", onClose = { referenceRequest = null; historyRevision++ },
         initialId = request.episodeId, downloadedOnly = request.offline, onDownload = ::downloadFromPlayer) }

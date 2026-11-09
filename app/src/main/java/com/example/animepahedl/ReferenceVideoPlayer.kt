@@ -53,7 +53,6 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
     val context = LocalContext.current
     val activity = context.findActivity()
     val profile = rememberAppDeviceProfile()
-    val landscapeOnlyHost = series.provider.usesReferencePlayer
     // Legacy offline queues can be reconstructed as DIRECT series whose episode URLs
     // are persisted content:// or file:// URIs. Library resume must play those URIs
     // locally instead of sending them through the online source resolver.
@@ -77,10 +76,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
     var index by rememberSaveable(series.provider.name, series.id) { mutableIntStateOf(
         series.episodes.indexOfFirst { it.id == initialId }.takeIf { initialId != null && it >= 0 }
             ?: series.episodes.indexOfFirst { history.matches(history.lastEpisode("series:${series.provider}:${series.id}"), it.url) }.coerceAtLeast(0)) }
-    var fullscreen by rememberSaveable(series.provider.name, series.id) {
-        mutableStateOf(ReferencePlayerHostPolicy.startsFullscreen(series.provider, profile.isTv))
-    }
-    val playerFullscreen = landscapeOnlyHost || fullscreen
+    val playerFullscreen = true
     var controlsVisible by remember { mutableStateOf(true) }
     var attempt by remember { mutableIntStateOf(0) }
     var autoAdvanced by remember { mutableStateOf(false) }
@@ -106,12 +102,9 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         ReferencePlaybackRegistry.beginEpisode(registryId, series.episodes[target])
         attempt++
     }
-    BackHandler {
-        if (ReferencePlayerHostPolicy.closesOnBack(series.provider, fullscreen, profile.isTv, inPip)) close()
-        else fullscreen = false
-    }
+    BackHandler { close() }
     DisposableEffect(playerFullscreen, profile.isTv) {
-        if (activity != null && ReferencePlayerHostPolicy.forcesLandscape(series.provider, playerFullscreen, profile.isTv)) {
+        if (activity != null && !profile.isTv) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else if (activity != null && !profile.isTv) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -123,12 +116,10 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
             }
         }
     }
-    DisposableEffect(landscapeOnlyHost) {
+    DisposableEffect(Unit) {
         onDispose {
-            if (landscapeOnlyHost) {
-                ReferencePlaybackRegistry.capture()
-                PlaybackService.pauseActivePlayback()
-            }
+            ReferencePlaybackRegistry.capture()
+            PlaybackService.pauseActivePlayback()
         }
     }
     PlayerSystemBarsEffect(activity, playerFullscreen, controlsVisible, profile.isTv)
@@ -192,7 +183,6 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                 }
             }
             result.streams.forEach { ReferencePlaybackRegistry.bind(registryId, current, it.url) }
-            if (result.local) fullscreen = true
             loaded = result
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
@@ -255,16 +245,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         LocalPlayerInPictureInPicture provides inPip, LocalPlayerDownload provides downloadAction) {
         MaterialTheme(colorScheme = colors.scheme) {
             Column(Modifier.fillMaxSize().background(Color.Black)) {
-                if (!playerFullscreen && !inPip) {
-                    Row(Modifier.fillMaxWidth().statusBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = ::close) { AppSymbol(AppIcon.Back, description = "Back") }
-                        Text(series.title, Modifier.weight(1f), maxLines = 1)
-                        IconButton(onClick = { savedShows.toggle(series) }) {
-                            AppSymbol(if (isSaved) AppIcon.BookmarkFilled else AppIcon.Bookmark, description = "Save show")
-                        }
-                    }
-                }
-                val pane = if (playerFullscreen || inPip) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                val pane = Modifier.fillMaxSize()
                 Box(pane.background(Color.Black)) {
                     when {
                         failure != null -> ErrorBox(failure!!, onRetry = { failure = null; attempt++ })
@@ -284,10 +265,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                                 onNextEpisode = { select(index + 1) }, onPreviousEpisode = { select(index - 1) },
                                 onAutoAdvance = { select(index + 1, true) }, onError = ::playbackFailure,
                                 onStalled = { url, position -> playbackFailure(AnililiError.PLAYBACK_SOURCE_UNREACHABLE.asPlayerFailure(), url, position) },
-                                modifier = Modifier.fillMaxSize(), onToggleFullscreen = {
-                                    if (ReferencePlayerHostPolicy.allowsFullscreenToggle(series.provider)) fullscreen = !fullscreen
-                                    else close()
-                                },
+                                modifier = Modifier.fillMaxSize(), onToggleFullscreen = ::close,
                                 startPositionMs = history.position(current.url),
                                 onProgress = { url, position, duration -> persist(url, position, duration) },
                                 onFinalProgress = { url, position, duration -> ReferencePlaybackRegistry.progressForStream(url, position, duration, force = true) },
@@ -307,15 +285,6 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                             )
                         }
                     }
-                }
-                if (!playerFullscreen && !inPip) Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (series.isSingleVideo) series.title else "Episode ${current.displayNumber}", style = MaterialTheme.typography.titleLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { fullscreen = true }) { Text("Fullscreen") }
-                        OutlinedButton(onClick = downloadAction.onClick) { Text(if (downloadAction.downloaded) "Downloaded" else "Download") }
-                    }
-                    if (series.description.isNotBlank()) Text(series.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

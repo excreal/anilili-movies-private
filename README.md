@@ -5,6 +5,8 @@ K-drama catalog by default and also includes Erotic Movies, whose catalog expose
 movie pages, genres, countries, decades, people, tags, series, and archive sorting
 where the source provides those routes. Search and pagination stay source-native.
 Open a title to inspect its details and play or download the media it exposes.
+Playback uses Anilili's native landscape player and controls; this edition has no
+vertical short-drama player.
 
 KissKH currently contributes Korean TV dramas. Other KissKH countries and movie
 formats are not included because the current adapter validates Korean TV detail

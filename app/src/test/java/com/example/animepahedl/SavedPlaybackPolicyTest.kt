@@ -6,26 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class ReferencePlayerHostPolicyTest {
-    @Test
-    fun everyProviderUsesTheShortDramaBoundaryForHostPolicy() {
-        SiteDownloadProvider.entries.forEach { provider ->
-            val shortDrama = provider in setOf(SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.KISS18, SiteDownloadProvider.NARTO)
-            assertEquals(shortDrama, provider.isShortDrama)
-            assertEquals(!shortDrama, provider.usesReferencePlayer)
-            assertEquals(!shortDrama, ReferencePlayerHostPolicy.startsFullscreen(provider, isTv = false))
-            assertTrue(ReferencePlayerHostPolicy.startsFullscreen(provider, isTv = true))
-            assertEquals(shortDrama, ReferencePlayerHostPolicy.allowsFullscreenToggle(provider))
-            assertEquals(!shortDrama, ReferencePlayerHostPolicy.closesOnBack(
-                provider, fullscreen = true, isTv = false, inPip = false))
-            assertTrue(ReferencePlayerHostPolicy.closesOnBack(
-                provider, fullscreen = false, isTv = false, inPip = false))
-            assertEquals(!shortDrama, ReferencePlayerHostPolicy.forcesLandscape(
-                provider, fullscreen = false, isTv = false))
-            assertFalse(ReferencePlayerHostPolicy.forcesLandscape(provider, fullscreen = true, isTv = true))
-        }
-    }
-
+class SavedPlaybackPolicyTest {
     @Test
     fun onlyPersistedContentAndFileUrisUseTheLibraryOfflineRoute() {
         assertTrue(isLocalPlaybackUri("content://downloads/video/42"))
@@ -34,20 +15,22 @@ class ReferencePlayerHostPolicyTest {
     }
 
     @Test
-    fun legacyNonSiteRowsBuildOfflineLandscapeQueueFromSavedUris() {
+    fun savedRowsBuildOfflineNormalPlayerQueueFromSavedUris() {
         val row = DownloadRow("row-1", "Saved movie", TransferState.COMPLETE, 100f,
             savedUri = "content://downloads/movie.mp4", availability = Availability.SAVED, showId = "", episodeNumber = "1")
         val identity = legacyIdentity("animepahe:movie-1")
         val records = mapOf(row.id to ExportRecord(row.title, "", "", uri = row.savedUri, identity = identity))
 
-        val series = savedLandscapeFallbackFromDownloads(listOf(row), records)
+        val series = savedPlaybackFallbackFromDownloads(listOf(row), records)
 
         assertEquals(SiteDownloadProvider.DIRECT, series?.provider)
         assertEquals("content://downloads/movie.mp4", series?.episodes?.single()?.url)
         assertEquals("row-1", series?.episodes?.single()?.id)
         listOf(SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.KISS18, SiteDownloadProvider.NARTO).forEach { provider ->
-            assertNull(savedLandscapeFallbackFromDownloads(
-                listOf(row.copy(showId = "sites:${provider.name}:known")), emptyMap()))
+            val fallback = savedPlaybackFallbackFromDownloads(
+                listOf(row.copy(showId = "sites:${provider.name}:known")), emptyMap())
+            assertEquals(SiteDownloadProvider.DIRECT, fallback?.provider)
+            assertEquals(row.savedUri, fallback?.episodes?.single()?.url)
         }
     }
 
@@ -63,8 +46,8 @@ class ReferencePlayerHostPolicyTest {
         )
 
         val playlist = savedDownloadPlaylist(second, listOf(second, first), records)
-        val series = savedLandscapeFallbackFromDownloads(playlist, records)
-        val reversedSeries = savedLandscapeFallbackFromDownloads(playlist.reversed(), records)
+        val series = savedPlaybackFallbackFromDownloads(playlist, records)
+        val reversedSeries = savedPlaybackFallbackFromDownloads(playlist.reversed(), records)
 
         assertEquals(listOf("row-1", "row-2"), playlist.map { it.id })
         assertEquals("saved:legacy:show-1", series?.id)

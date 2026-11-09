@@ -57,8 +57,8 @@ internal fun savedDownloadPlaylist(
     return matching.sortedBy { it.episodeNumber.toDoubleOrNull() ?: 0.0 }.ifEmpty { listOf(initial) }
 }
 
-/** Rebuilds an offline, landscape-only queue when a saved site row has no readable provider series. */
-internal fun savedLandscapeFallbackFromDownloads(
+/** Rebuilds an offline queue when a saved row has no readable provider series. */
+internal fun savedPlaybackFallbackFromDownloads(
     rows: List<DownloadRow>,
     records: Map<String, ExportRecord>,
 ): SiteDownloadSeries? {
@@ -66,10 +66,6 @@ internal fun savedLandscapeFallbackFromDownloads(
     val first = savedRows.firstOrNull() ?: return null
     val storedSession = records[first.id]?.identity?.anime?.session.orEmpty()
     val session = storedSession.ifBlank { first.showId }
-    val encodedProvider = session.takeIf { it.startsWith("sites:") }
-        ?.removePrefix("sites:")?.substringBefore(':').orEmpty()
-    val provider = runCatching { SiteDownloadProvider.valueOf(encodedProvider) }.getOrNull()
-    if (provider?.isShortDrama == true) return null
     val episodes = savedRows.mapIndexedNotNull { index, row ->
         val uri = row.savedUri.ifBlank { records[row.id]?.uri.orEmpty() }.takeIf(String::isNotBlank) ?: return@mapIndexedNotNull null
         SiteDownloadEpisode(row.id, row.episodeNumber.toIntOrNull() ?: index + 1, row.title, uri)

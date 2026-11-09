@@ -16,8 +16,6 @@ import javax.crypto.spec.SecretKeySpec
 
 internal enum class SiteDownloadProvider { DRAMATIP, KISS18, NARTO, EROTICMV, KISSKH, DIRECT }
 internal val SiteDownloadProvider.isShortDrama get() = this in setOf(SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.KISS18, SiteDownloadProvider.NARTO)
-/** Long-form and movie media use the original Anilili player; short dramas keep their dedicated player. */
-internal val SiteDownloadProvider.usesReferencePlayer get() = !isShortDrama
 internal val SiteDownloadProvider.contentLabel get() = when { isShortDrama -> "Short drama"; this == SiteDownloadProvider.EROTICMV -> "Movie"; this == SiteDownloadProvider.KISSKH -> "K-drama"; else -> "Video" }
 internal data class SiteDownloadEpisode(val id: String, val number: Int, val title: String, val url: String, val numberLabel: String? = null)
 internal val SiteDownloadEpisode.displayNumber get() = numberLabel ?: number.toString()
