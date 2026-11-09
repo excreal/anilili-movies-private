@@ -77,6 +77,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.semantics.Role
 import com.anilili.data.settings.CaptionStyle
 import com.anilili.data.settings.PlayerContentScale
+import com.anilili.data.settings.PlayerAspectRatio
 import com.anilili.data.settings.SettingsStore
 import com.anilili.ui.adaptive.FocusFillRest
 import com.anilili.errors.AnililiError
@@ -139,6 +140,8 @@ internal fun PlayerSettingsSheet(
     audioFormat: String? = null,
     contentScale: PlayerContentScale? = null,
     onContentScaleChange: (PlayerContentScale) -> Unit = {},
+    aspectRatio: PlayerAspectRatio? = null,
+    onAspectRatioChange: (PlayerAspectRatio) -> Unit = {},
     autoSkip: Boolean? = null,
     onAutoSkipChange: (Boolean) -> Unit = {},
     /** "Skip filler episodes"; null where there is no next episode to skip to, as offline. */
@@ -172,6 +175,8 @@ internal fun PlayerSettingsSheet(
             audioFormat = audioFormat,
             contentScale = contentScale,
             onContentScaleChange = onContentScaleChange,
+            aspectRatio = aspectRatio,
+            onAspectRatioChange = onAspectRatioChange,
             autoSkip = autoSkip,
             onAutoSkipChange = onAutoSkipChange,
             autoSkipFiller = autoSkipFiller,
@@ -546,6 +551,8 @@ private fun ColumnScope.SheetSections(
     audioFormat: String?,
     contentScale: PlayerContentScale?,
     onContentScaleChange: (PlayerContentScale) -> Unit,
+    aspectRatio: PlayerAspectRatio?,
+    onAspectRatioChange: (PlayerAspectRatio) -> Unit,
     autoSkip: Boolean?,
     onAutoSkipChange: (Boolean) -> Unit,
     autoSkipFiller: Boolean?,
@@ -647,6 +654,17 @@ private fun ColumnScope.SheetSections(
             options = PlayerContentScale.entries,
             selected = current,
             onSelect = onContentScaleChange,
+            tabLabel = { it.label },
+            claimInitialFocus = false,
+        )
+    }
+
+    aspectRatio?.let { current ->
+        MidnightSectionLabel("Aspect ratio")
+        MidnightUnderlineSelector(
+            options = PlayerAspectRatio.entries,
+            selected = current,
+            onSelect = onAspectRatioChange,
             tabLabel = { it.label },
             claimInitialFocus = false,
         )

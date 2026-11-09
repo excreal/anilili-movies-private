@@ -52,8 +52,10 @@ internal fun CatalogScreen(
         if (!browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "home-hero") {
             Column(Modifier.fillMaxWidth()) {
                 ReferenceHomeChrome(model, backdrop = null, onLink = onLink, onDownloads = onDownloads, overHero = false)
-                if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, height = 300.dp)
-                else Spacer(Modifier.height(300.dp))
+                if (model.source != CatalogSource.EROTICMV) {
+                    if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, height = 300.dp)
+                    else Spacer(Modifier.height(300.dp))
+                }
             }
         }
         if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "browse-controls") {

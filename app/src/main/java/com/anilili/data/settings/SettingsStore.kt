@@ -484,6 +484,24 @@ enum class PlayerContentScale(
     }
 }
 
+/** Target frame shape used by the native video view. */
+enum class PlayerAspectRatio(
+    val storedValue: String,
+    val label: String,
+    val ratio: Float?,
+) {
+    ORIGINAL("original", "Original", null),
+    RATIO_16_9("16:9", "16:9", 16f / 9f),
+    RATIO_4_3("4:3", "4:3", 4f / 3f),
+    RATIO_21_9("21:9", "21:9", 21f / 9f),
+    SQUARE("1:1", "1:1", 1f);
+
+    companion object {
+        fun fromStored(value: String?): PlayerAspectRatio =
+            entries.firstOrNull { it.storedValue == value } ?: ORIGINAL
+    }
+}
+
 /**
  * How much of an episode the player holds ahead of the picture.
  *
@@ -1075,6 +1093,9 @@ object SettingsStore {
     private val _playerContentScale = MutableStateFlow(PlayerContentScale.FIT)
     val playerContentScale = _playerContentScale.asStateFlow()
 
+    private val _playerAspectRatio = MutableStateFlow(PlayerAspectRatio.ORIGINAL)
+    val playerAspectRatio = _playerAspectRatio.asStateFlow()
+
     /** Read by the playback service at every prepare, so a change lands on the next episode. */
     private val _playbackBufferSize = MutableStateFlow(PlaybackBufferSize.AUTOMATIC)
     val playbackBufferSize = _playbackBufferSize.asStateFlow()
@@ -1516,6 +1537,11 @@ object SettingsStore {
     fun setPlayerContentScale(value: PlayerContentScale) {
         _playerContentScale.value = value
         scope.launch { store.edit { it[PLAYER_CONTENT_SCALE] = value.storedValue } }
+    }
+
+    fun setPlayerAspectRatio(value: PlayerAspectRatio) {
+        _playerAspectRatio.value = value
+        scope.launch { store.edit { it[PLAYER_ASPECT_RATIO] = value.storedValue } }
     }
 
     fun setPlaybackBufferSize(value: PlaybackBufferSize) {
@@ -2055,6 +2081,7 @@ object SettingsStore {
             PreferredSubtitleLanguage.fromStored(prefs[PREFERRED_SUBTITLE_LANGUAGE])
         _subtitleSearchLanguages.value = prefs[SUBTITLE_SEARCH_LANGUAGES].orEmpty()
         _playerContentScale.value = PlayerContentScale.fromStored(prefs[PLAYER_CONTENT_SCALE])
+        _playerAspectRatio.value = PlayerAspectRatio.fromStored(prefs[PLAYER_ASPECT_RATIO])
         _playbackBufferSize.value = PlaybackBufferSize.fromStored(prefs[PLAYBACK_BUFFER_SIZE])
         _videoCacheSize.value = VideoCacheSize.fromStored(prefs[VIDEO_CACHE_SIZE])
         _uiScale.value = UiScale.fromStored(prefs[UI_SCALE])
@@ -2228,6 +2255,7 @@ object SettingsStore {
     private val PREFERRED_SUBTITLE_LANGUAGE = stringPreferencesKey("preferred_subtitle_language")
     private val SUBTITLE_SEARCH_LANGUAGES = stringPreferencesKey("subtitle_search_languages")
     private val PLAYER_CONTENT_SCALE = stringPreferencesKey("player_content_scale")
+    private val PLAYER_ASPECT_RATIO = stringPreferencesKey("player_aspect_ratio")
     private val PLAYBACK_BUFFER_SIZE = stringPreferencesKey("playback_buffer_size")
     private val VIDEO_CACHE_SIZE = stringPreferencesKey("video_cache_size")
     private val UI_SCALE = stringPreferencesKey("ui_scale")
@@ -2384,6 +2412,7 @@ object SettingsStore {
         SECONDARY_SUBTITLE_LANGUAGE,
         SUBTITLE_SEARCH_LANGUAGES,
         PLAYER_CONTENT_SCALE,
+        PLAYER_ASPECT_RATIO,
         // Backed up despite reading as a hardware fact, because it is not one: it is a decision
         // about a connection, and someone who needed a longer buffer for their Wi-Fi is on the same
         // Wi-Fi on their next device. The size a device cannot afford is clamped by its own heap

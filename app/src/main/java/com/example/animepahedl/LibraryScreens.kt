@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.anilili.data.settings.SettingsStore
 import com.anilili.data.settings.ThemePreset
+import com.anilili.data.settings.PlayerAspectRatio
 
 internal fun friendlyDownloadStatus(status: String): String = when (status) {
     "Downloading HLS", "Downloading file" -> "Downloading"
@@ -469,6 +470,7 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
     val themeAccent by SettingsStore.themeAccent.collectAsState()
     val themeStyle by SettingsStore.themeStyle.collectAsState()
     val themeContrast by SettingsStore.themeContrast.collectAsState()
+    val playerAspectRatio by SettingsStore.playerAspectRatio.collectAsState()
     androidx.activity.compose.BackHandler(enabled = section != null) { section = null }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -496,6 +498,9 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
                 "player" -> {
                     item(contentType = "playback-setting") { PlaybackPreference("play-on-open", "Play when an episode opens", "Start playing automatically") }
                     item(contentType = "playback-setting") { PlaybackPreference("auto-next", "Play the next episode", "Continue automatically when an episode finishes") }
+                    item(contentType = "playback-setting") {
+                        SettingsRow(AppIcon.Settings, "Video aspect ratio", playerAspectRatio.label) { choice = "aspect-ratio" }
+                    }
                     item(contentType = "settings-description") { Text("Downloaded episodes play first. Your place is shared between online and downloaded playback.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 "notifications" -> { item(contentType = "notification-settings") { NotificationPreferences() } }
@@ -546,6 +551,7 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
             "storage" -> "Download storage"
             "audio" -> "Default audio"
             "speed" -> "Download speed"
+            "aspect-ratio" -> "Video aspect ratio"
             else -> "Browser session"
         }) }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -579,6 +585,19 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(2, 4, 8, 12).forEach { count ->
                                 FilterChip(selected = model.connections == count, onClick = { model.setDownloadConnections(count) }, label = { Text("$count") })
+                            }
+                        }
+                    }
+                    "aspect-ratio" -> {
+                        Text("Choose the frame shape used by the video player.", style = MaterialTheme.typography.bodySmall)
+                        PlayerAspectRatio.entries.forEach { ratio ->
+                            TextButton(onClick = {
+                                SettingsStore.setPlayerAspectRatio(ratio)
+                                choice = null
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                RadioButton(selected = playerAspectRatio == ratio, onClick = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(ratio.label, Modifier.weight(1f))
                             }
                         }
                     }

@@ -117,6 +117,7 @@ import com.anilili.data.settings.CaptionPosition
 import com.anilili.data.settings.CaptionStyle
 import com.anilili.data.settings.DefaultQuality
 import com.anilili.data.settings.PlayerContentScale
+import com.anilili.data.settings.PlayerAspectRatio
 import com.anilili.data.settings.PreferredAudioLanguage
 import com.anilili.data.settings.PreferredSubtitleLanguage
 import com.anilili.data.settings.SettingsStore
@@ -390,6 +391,7 @@ fun PlayerSurface(
     val holdPlaybackSpeed by SettingsStore.holdPlaybackSpeed.collectAsState()
     val contentScale by SettingsStore.playerContentScale.collectAsState()
     val effectiveContentScale = contentScaleOverride ?: contentScale
+    val aspectRatio by SettingsStore.playerAspectRatio.collectAsState()
     val audioOutputFormat by AudioOutputMonitor.current.collectAsState()
     CompiledSeparately {
     PlayerBrightnessOverride(enabled = playerGestures)
@@ -442,6 +444,9 @@ fun PlayerSurface(
     // Followed here rather than left to PlayerView, which drops the update; see
     // [applyContentAspectRatio]. 0 means "not known", the same value PlayerView passes on.
     var contentAspectRatio by perController.contentAspectRatio
+    // A manual target ratio is useful even before Media3 reports a video size (or if the source
+    // never reports one). Original follows the decoder and remains zero until that ratio is known.
+    val effectiveContentAspectRatio = aspectRatio.ratio ?: contentAspectRatio
     var preparedSubtitleSignature by perController.preparedSubtitleSignature
     // Followed as state rather than read off the controller where the settings sheet is composed:
     // `playbackParameters` is a plain getter, so nothing recomposed when it changed and the speed
@@ -1431,13 +1436,13 @@ fun PlayerSurface(
         phoneControlsVisible = false
     }
     // PiP changes the native PlayerView's measured bounds without replacing its controller.
-    // Reapply the selected fit policy and the decoder's current ratio after that frame so the
-    // fullscreen view and PiP use the same uncropped geometry on both entry and return.
-    LaunchedEffect(inPictureInPicture, effectiveContentScale, contentAspectRatio) {
+    // Reapply the selected fit policy and target ratio after that frame so the selected framing
+    // survives entry into and return from PiP.
+    LaunchedEffect(inPictureInPicture, effectiveContentScale, effectiveContentAspectRatio) {
         androidx.compose.runtime.withFrameNanos { }
         playerView?.let { view ->
             view.resizeMode = playerResizeMode(effectiveContentScale)
-            view.applyContentAspectRatio(contentAspectRatio)
+            view.applyContentAspectRatio(effectiveContentAspectRatio)
             view.requestLayout()
         }
     }
@@ -2028,7 +2033,7 @@ fun PlayerSurface(
                 it.isFocusable = !device.isTv
                 it.isFocusableInTouchMode = !device.isTv
                 it.resizeMode = playerResizeMode(effectiveContentScale)
-                it.applyContentAspectRatio(contentAspectRatio)
+                it.applyContentAspectRatio(effectiveContentAspectRatio)
                 if (device.isTv) it.clearFocus()
                 val controlsVisible = if (device.isTv) tvControlsVisible else phoneControlsVisible
                 it.applyCaptionStyle(captionStyle, controlsVisible, device.isTv)
@@ -2360,6 +2365,8 @@ fun PlayerSurface(
                 onContentScaleChange = { scale ->
                     SettingsStore.setPlayerContentScale(scale)
                 },
+                aspectRatio = aspectRatio,
+                onAspectRatioChange = SettingsStore::setPlayerAspectRatio,
                 autoSkip = autoSkipIntroOutro,
                 onAutoSkipChange = SettingsStore::setAutoSkipIntroOutro,
                 // Only where there is a list to move along: offline playback has no Next.
