@@ -95,6 +95,33 @@ internal fun CatalogScreen(
             HorizontalDivider(Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
+        if (browseMode && model.source == CatalogSource.EROTICMV && model.categoryGroups.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "movie-categories") {
+                Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    model.categoryGroups.toSortedMap().forEach { (group, terms) ->
+                        if (terms.isNotEmpty()) {
+                            Text(group.replaceFirstChar(Char::uppercase), Modifier.padding(horizontal = 16.dp),
+                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(terms, key = { it.url ?: it.id ?: it.name }, contentType = { "movie-category" }) { term ->
+                                    AssistChip(onClick = {
+                                        val kind = when (group) {
+                                            "genres" -> "genre"
+                                            "tags" -> "tag"
+                                            "actors" -> "actor"
+                                            "directors" -> "director"
+                                            "series" -> "series"
+                                            else -> "category"
+                                        }
+                                        model.explore(SiteDownloadProvider.EROTICMV, kind, term)
+                                    }, label = { Text(term.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (!browseMode && continueWatching != null) item(span = { GridItemSpan(maxLineSpan) }, contentType = "continue-watching") { continueWatching() }
         if (!browseMode && model.items.isNotEmpty()) catalogHomeSections(model.items, images, columns, phoneCardWidth, expanded,
             toggle = { name -> expanded = if (name in expanded) expanded - name else expanded + name },

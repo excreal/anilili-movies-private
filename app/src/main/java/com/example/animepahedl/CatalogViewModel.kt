@@ -4,6 +4,8 @@ import androidx.compose.runtime.*
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.animepahedl.metadata.MetadataSite
+import com.example.animepahedl.metadata.SiteMetadataApis
 import kotlinx.coroutines.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.net.URI
@@ -148,6 +150,9 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         CatalogSource.EROTICMV -> EroticMvCatalog(cookieHeader = cookies::headerFor)
         CatalogSource.KISSKH -> KisskhCatalog(application.cacheDir, cookies::headerFor)
     } } }
+    var categoryGroups by mutableStateOf<Map<String, List<SiteShowTerm>>>(emptyMap()); private set
+    private var taxonomyJob: Job? = null
+    private val metadataApis by lazy { SiteMetadataApis.forApp(application) }
     init {
         load(false)
         viewModelScope.launch {
@@ -162,7 +167,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
             }
         }
     }
-    fun select(value: CatalogSource) { if (source == value || value !in availableSources) return; source = value; query = ""; activeFilter = null; filterLabel = null; load(false) }
+    fun select(value: CatalogSource) { if (source == value || value !in availableSources) return; source = value; query = ""; activeFilter = null; filterLabel = null; load(false); loadCategories(value) }
     fun edit(value: String) { activeFilter = null; filterLabel = null; query = value; load(false, 400) }
     fun explore(provider: SiteDownloadProvider, kind: String, term: SiteShowTerm) {
         val mapped = when (provider) {
@@ -180,6 +185,15 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     fun reset() { activeFilter = null; filterLabel = null; query = ""; load(false) }
     fun refresh() = load(false, force = true)
     fun more() { if (!loading && nextUrl != null) load(true) }
+    private fun loadCategories(value: CatalogSource) {
+        taxonomyJob?.cancel()
+        categoryGroups = emptyMap()
+        val site = when (value) { CatalogSource.EROTICMV -> MetadataSite.EROTICMV; else -> return }
+        taxonomyJob = viewModelScope.launch {
+            val groups = runCatching { metadataApis[site].taxonomy().groups }.getOrDefault(emptyMap())
+            if (source == value) categoryGroups = groups.mapValues { (_, terms) -> terms.map { SiteShowTerm(it.name, it.id, it.url) } }
+        }
+    }
     private fun load(append: Boolean, delayMs: Long = 0, force: Boolean = false) {
         job?.cancel()
         val selectedSource = source
@@ -229,7 +243,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
 }
 
 internal fun isSafeMetadataFilterRoute(source: CatalogSource, kind: String, raw: String?): Boolean {
-        if (raw == null || kind !in setOf("genre", "category", "tag", "actor", "director")) return false
+        if (raw == null || kind !in setOf("genre", "category", "tag", "actor", "director", "series")) return false
         val url = runCatching { raw.toHttpUrl() }.getOrNull() ?: return false
         if (url.scheme != "https" || url.username.isNotEmpty() || url.password.isNotEmpty() || url.querySize > 0 || url.fragment != null) return false
         if (source == CatalogSource.EROTICMV) return safeEroticMvFilterRoute(kind, raw, url)
@@ -263,10 +277,11 @@ private fun safeEroticMvFilterRoute(kind: String, raw: String, url: okhttp3.Http
         normalized.removeAt(normalized.lastIndex)
         normalized.removeAt(normalized.lastIndex)
     }
-    if (normalized.any { it != "category" && it !in setOf("genre", "country", "decades", "tag", "actor", "director") && !it.matches(Regex("[\\p{L}\\p{N}_.~-]+")) }) return false
+    if (normalized.any { it != "category" && it !in setOf("genre", "country", "decades", "tag", "actor", "director", "series") && !it.matches(Regex("[\\p{L}\\p{N}_.~-]+")) }) return false
     fun slug(value: String?) = value != null && value != "." && value != ".." && value.matches(Regex("[\\p{L}\\p{N}_.~-]+"))
     return when (kind) {
         "actor", "director" -> normalized.size == 2 && normalized[0] == kind && slug(normalized[1])
+        "series" -> (normalized.size == 1 && normalized[0] == "series") || (normalized.size == 2 && normalized[0] == "series" && slug(normalized[1]))
         "tag" -> normalized.size == 2 && normalized[0] == "tag" && slug(normalized[1])
         "genre" -> normalized.size == 3 && normalized[0] == "category" && normalized[1] == "genre" && slug(normalized[2])
         "category" -> (normalized.size == 2 && normalized[0] == "category" && slug(normalized[1])) ||
