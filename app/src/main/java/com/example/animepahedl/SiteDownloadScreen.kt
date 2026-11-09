@@ -198,6 +198,7 @@ internal fun SiteDownloadScreen(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) { AppSymbol(AppIcon.Back, description = "Back") }
+        Text("Details", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onToggleSave) {
             AppSymbol(if (saved) AppIcon.BookmarkFilled else AppIcon.Bookmark,

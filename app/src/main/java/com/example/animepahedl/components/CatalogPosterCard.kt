@@ -52,7 +52,7 @@ internal fun CatalogPosterCard(
     val titleBlockHeight = with(LocalDensity.current) { titleStyle.lineHeight.toDp() * 2 + 4.dp }
     Column(modifier.clickable(role = Role.Button, onClickLabel = "Open details", onClick = onClick)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+            Modifier.fillMaxWidth().aspectRatio(if (item.wideArtwork) 16f / 9f else 2f / 3f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {

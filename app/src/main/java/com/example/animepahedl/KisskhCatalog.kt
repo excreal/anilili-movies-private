@@ -199,7 +199,7 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
     private fun items(data: JsonObject): List<CatalogItem> = data.dramaArray("data").mapNotNull {
         val row = it.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
         val id = row.dramaString("id").toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
-        CatalogItem(row.dramaString("title"), kisskhDetailUrl(id, row.dramaString("title")).toString(), row.dramaString("thumbnail"))
+        CatalogItem(row.dramaString("title"), kisskhDetailUrl(id, row.dramaString("title")).toString(), row.dramaString("thumbnail"), wideArtwork = true)
     }
     override suspend fun home(): CatalogPage = catalogPage(1)
     override suspend fun search(query: String): CatalogPage = searchPage(query, 0)
@@ -219,7 +219,7 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
         withContext(Dispatchers.IO) {
             if (System.currentTimeMillis() - indexTime < 1_800_000) index?.let { return@withContext it }
             if (file.exists() && System.currentTimeMillis() - file.lastModified() < 1_800_000 && file.length() < 8_000_000) {
-                runCatching { com.google.gson.Gson().fromJson(file.readText(), Array<CatalogItem>::class.java).toList() }.getOrNull()?.let {
+                runCatching { com.google.gson.Gson().fromJson(file.readText(), Array<CatalogItem>::class.java).map { item -> item.copy(wideArtwork = true) } }.getOrNull()?.let {
                     index = it; indexTime = file.lastModified(); return@withContext it
                 }
             }

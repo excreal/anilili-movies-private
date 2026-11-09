@@ -45,9 +45,9 @@ internal fun LibraryScreen(store: SavedShowsStore, history: List<SiteDownloadSer
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(saved, key = { it.provider.name + it.id }) { series ->
                     val summary = rememberSeriesPlaybackSummary(series)
-                    Column(Modifier.width(108.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(Modifier.width(if (series.provider == SiteDownloadProvider.KISSKH) 174.dp else 108.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box {
-                            CatalogPosterCard(CatalogItem(series.title, series.url, series.posterThumbnail()), images,
+                            CatalogPosterCard(CatalogItem(series.title, series.url, series.posterThumbnail(), wideArtwork = series.provider == SiteDownloadProvider.KISSKH), images,
                                 onClick = { onDetails(series) })
                             IconButton(onClick = { store.toggle(series) }, modifier = Modifier.align(Alignment.TopEnd)) {
                                 AppSymbol(AppIcon.BookmarkFilled, description = "Unsave ${series.title}")

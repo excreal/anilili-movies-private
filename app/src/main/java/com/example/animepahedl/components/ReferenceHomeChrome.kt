@@ -42,7 +42,6 @@ internal fun ReferenceHomeChrome(model: CatalogViewModel, backdrop: HazeState?, 
                     modifier = Modifier.clip(shape).then(if (frosted) Modifier.backdropBlur(backdrop, Color.Black.copy(alpha = .30f)) else Modifier)
                         .background(if (selected) MaterialTheme.colorScheme.primary else if (frosted) Color.Transparent else Color.Black.copy(alpha = .52f))
                         .border(1.dp, if (selected) Color.Transparent else Color.White.copy(alpha = .18f), shape)
-                        .heightIn(min = 48.dp)
                         .selectable(selected = selected, role = Role.Tab, onClick = { model.select(source) })
                         .padding(horizontal = 16.dp, vertical = 8.dp))
             }

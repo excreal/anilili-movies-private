@@ -3,6 +3,7 @@ package com.example.animepahedl.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -30,14 +31,15 @@ internal fun ContinueWatchingRow(
 ) {
     if (series.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
-        Text("Continue Watching", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Continue Watching", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(series, key = { it.provider.name + it.id }) { item ->
                 val summary = rememberSeriesPlaybackSummary(item)
                 var showActions by androidx.compose.runtime.remember(item.provider, item.id) { androidx.compose.runtime.mutableStateOf(false) }
                 Column(Modifier.width(174.dp).combinedClickable(onClick = { onOpen(item) }, onLongClick = { showActions = true })) {
                     Box {
                         Thumbnail(item.posterThumbnail(), item.title, images, Modifier.fillMaxWidth().aspectRatio(16f / 9f), cornerRadius = 12.dp)
+                        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = .30f)))
                         AppSymbol(AppIcon.Play, Modifier.align(Alignment.Center))
                         IconButton(onClick = { showActions = true }, modifier = Modifier.align(Alignment.TopEnd)) {
                             Icon(Icons.Filled.MoreVert, contentDescription = "More actions for ${item.title}", tint = MaterialTheme.colorScheme.onSurface)

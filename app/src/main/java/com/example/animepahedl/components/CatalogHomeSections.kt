@@ -55,6 +55,8 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
 ) {
     val sections = listOf("Popular" to titles.take(10), "Discover" to titles.drop(10))
     sections.filter { it.second.isNotEmpty() }.forEach { (name, entries) ->
+        val wideArtwork = entries.firstOrNull()?.wideArtwork == true
+        val sectionColumns = if (wideArtwork) 2 else columns
         item(key = "section:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -62,11 +64,11 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
             }
         }
         if (name in expanded) {
-            val rows = entries.chunked(columns)
+            val rows = entries.chunked(sectionColumns)
             items(rows.size, key = { "section:$name:${rows[it].first().url}" }, span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { index ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     rows[index].forEach { entry -> CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.weight(1f)) }
-                    repeat(columns - rows[index].size) { Spacer(Modifier.weight(1f)) }
+                    repeat(sectionColumns - rows[index].size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         } else item(key = "rail:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
@@ -76,7 +78,7 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
                     .distinctUntilChanged().collect { if (it) onMore() }
             }
             LazyRow(state = rail, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(entries, key = { it.url }) { entry -> CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.width(108.dp)) }
+                items(entries, key = { it.url }) { entry -> CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.width(if (wideArtwork) 174.dp else 108.dp)) }
             }
         }
         if (name == "Discover" && name in expanded && hasMore) item(key = "more:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
