@@ -38,7 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
+import com.anilili.ui.theme.LocalAppColors
+import com.anilili.ui.theme.ThemeSpec
+import com.anilili.ui.theme.appColors
+import com.anilili.ui.theme.wallpaperSeed
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -79,6 +84,7 @@ internal fun DramaPlayerSurface(
     if (episodes.isEmpty()) { LaunchedEffect(Unit) { onClose() }; return }
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
+    val playerColors = remember(context) { appColors(ThemeSpec(), wallpaperSeed(context)) }
     val history = remember(context) { PlaybackHistory(context) }
     val playbackPreferences = remember(context) { context.getSharedPreferences("app-settings", android.content.Context.MODE_PRIVATE) }
     val playOnOpen = remember { playbackPreferences.getBoolean("play-on-open", true) }
@@ -207,6 +213,8 @@ internal fun DramaPlayerSurface(
     }
     LaunchedEffect(pager.settledPage) { controlsVisible = true; interaction++ }
     val current = episodes[pager.settledPage.coerceIn(episodes.indices)]
+    CompositionLocalProvider(LocalAppColors provides playerColors) {
+    MaterialTheme(colorScheme = playerColors.scheme) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         VerticalPager(pager, modifier = Modifier.fillMaxSize(), key = { episodes[it].id }, beyondViewportPageCount = 0) { page ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -224,10 +232,12 @@ internal fun DramaPlayerSurface(
                         else if (player?.isPlaying == true) player.pause() else player?.play()
                     })
                     if (loading && error == null) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
-                    else if (!playing && error == null) FilledTonalIconButton(onClick = {
+                    else if (!playing && error == null) FilledIconButton(onClick = {
                         if (player?.playbackState == Player.STATE_ENDED) player.seekTo(0)
                         player?.play()
-                    }, modifier = Modifier.size(64.dp)) { AppSymbol(AppIcon.Play, Modifier.size(32.dp), "Play video") }
+                    }, modifier = Modifier.size(56.dp), colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = playerColors.playerAccent, contentColor = playerColors.onPlayerAccent,
+                    )) { AppSymbol(AppIcon.Play, Modifier.size(28.dp), "Play video") }
                     error?.let { message ->
                         Surface(Modifier.padding(24.dp), color = Color.Black.copy(alpha = .85f), shape = MaterialTheme.shapes.large) {
                             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -241,45 +251,50 @@ internal fun DramaPlayerSurface(
             }
         }
         AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.TopCenter), enter = fadeIn(), exit = fadeOut()) {
-        Row(Modifier.fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .45f), Color.Black.copy(alpha = .15f), Color.Transparent)))
-            .statusBarsPadding().padding(start = 8.dp, end = 12.dp, top = 6.dp, bottom = 20.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = .64f), 1f to Color.Transparent,
+        ))) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             CompositionLocalProvider(LocalContentColor provides Color.White) {
-                IconButton(onClick = ::close, modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .72f))) {
+                IconButton(onClick = ::close, modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
                     AppSymbol(AppIcon.Back, description = "Back")
                 }
             }
-            Text(title, Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = .65f))
-                .padding(horizontal = 10.dp, vertical = 8.dp), color = Color.White,
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+            Text(title, Modifier.weight(1f).padding(horizontal = 6.dp), color = Color.White,
+                style = MaterialTheme.typography.titleMedium.copy(shadow = Shadow(Color.Black.copy(alpha = .82f), Offset(0f, 2f), 7f)),
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             onToggleSave?.let { toggle ->
                 IconButton(onClick = { interaction++; toggle() }, colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White),
-                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = .65f))) {
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = .38f))) {
                     AppSymbol(if (saved) AppIcon.BookmarkFilled else AppIcon.Bookmark, description = if (saved) "Unsave show" else "Save show")
                 }
             }
             external?.let { callback -> TextButton(onClick = { persist(); player?.pause(); callback(pager.settledPage) },
                 colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
-                modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .72f))) { Text("External") } }
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .38f))) { Text("External") } }
+        }
         }
         }
         AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
         Column(Modifier.fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .18f), Color.Black.copy(alpha = .32f))))
-            .navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            .background(Brush.verticalGradient(0f to Color.Transparent, .34f to Color.Black.copy(alpha = .22f), 1f to Color.Black.copy(alpha = .68f)))
+            .navigationBarsPadding().padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text(current.label, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${pager.settledPage + 1} / ${episodes.size}" + if (episodes.size > 1) " · Swipe for next episode" else "",
+                    Text(current.label, color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${pager.settledPage + 1} / ${episodes.size}",
                         color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
                 }
-                if (episodes.size > 1) Button(onClick = { range = pager.settledPage / 25; chooser = true; interaction++ }, shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                    modifier = Modifier.padding(start = 12.dp)) { Text("Episodes", fontWeight = FontWeight.SemiBold) }
+                if (episodes.size > 1) Surface(onClick = { range = pager.settledPage / 25; chooser = true; interaction++ },
+                    shape = RoundedCornerShape(24.dp), color = Color.Black.copy(alpha = .42f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .24f)), contentColor = Color.White) {
+                    Text("Episodes", Modifier.padding(horizontal = 17.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                }
             }
-            if (player != null) PlayerSeekControls(player, onScrub = { scrubbing = it; interaction++ })
+            if (player != null) PlayerSeekControls(player, playerColors.playerAccent, onScrub = { scrubbing = it; interaction++ })
         }
     }
     }
@@ -304,19 +319,21 @@ internal fun DramaPlayerSurface(
                 val selected = index == pager.settledPage
                 Surface(onClick = { chooser = false; controlsVisible = true; interaction++; scope.launch { pager.scrollToPage(index) } },
                     modifier = Modifier.aspectRatio(1f).heightIn(min = 48.dp).semantics { contentDescription = episodes[index].label },
-                    shape = RoundedCornerShape(8.dp), color = if (selected) Color.White else Color(0xFF242424),
-                    contentColor = if (selected) Color.Black else Color.White) {
+                    shape = RoundedCornerShape(8.dp), color = if (selected) playerColors.playerAccent else Color(0xFF242424),
+                    contentColor = if (selected) playerColors.onPlayerAccent else Color.White) {
                     Box(contentAlignment = Alignment.Center) { Text(episodeNumber(index), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold) }
                 }
             }
         }
         Spacer(Modifier.navigationBarsPadding())
     }
+    }
+    }
 }
 
 /** Position ticking is confined to this small control subtree, not the player/pager. */
 @Composable
-private fun PlayerSeekControls(player: ExoPlayer, onScrub: (Boolean) -> Unit) {
+private fun PlayerSeekControls(player: ExoPlayer, playedColor: Color, onScrub: (Boolean) -> Unit) {
     var position by remember(player) { mutableLongStateOf(0L) }
     var duration by remember(player) { mutableLongStateOf(0L) }
     var dragging by remember { mutableStateOf(false) }
@@ -351,8 +368,8 @@ private fun PlayerSeekControls(player: ExoPlayer, onScrub: (Boolean) -> Unit) {
         val y = size.height / 2
         val x = left + (right - left) * fraction
         drawLine(Color.White.copy(alpha = .28f), Offset(left, y), Offset(right, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-        drawLine(Color.White, Offset(left, y), Offset(x, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-        drawCircle(Color.White, radius = if (dragging) 6.dp.toPx() else 4.dp.toPx(), center = Offset(x, y))
+        drawLine(playedColor, Offset(left, y), Offset(x, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+        drawCircle(playedColor, radius = if (dragging) 6.dp.toPx() else 4.dp.toPx(), center = Offset(x, y))
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(playerTime(if (dragging) (target * duration).toLong() else position), color = Color.White.copy(alpha = .85f), style = MaterialTheme.typography.labelSmall)
