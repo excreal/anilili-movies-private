@@ -36,6 +36,7 @@ Reference: `/root/Anilili` source, plus the Android Developers accessibility and
 - Saved short-drama files now open through an explicit progressive MP4 media source after checking that the document URI is readable and non-empty.
 - Home section layout controls use the same grid/list icons as Anilili. Browse source-shortcut visibility has a state-specific accessibility label.
 - KissKH Home and Library artwork keeps the same height as a portrait rail card; its card width expands to the matching 16:9 artwork ratio so banners remain readable instead of shrinking into tiny images.
+- Library Saved shows use a fixed 152 dp card width across all providers, including KissKH; KissKH retains its landscape artwork ratio within that width. Browse uses two result columns on phones and four on expanded windows.
 - Discover rail pagination follows Anilili's explicit load-more affordance. Rendering the rail no longer triggers pagination by itself; tapping the trailing card or expanded-grid button requests the next page.
 - Settings search, section cards, and empty-state items declare matching lazy-list content types for composition reuse.
 
