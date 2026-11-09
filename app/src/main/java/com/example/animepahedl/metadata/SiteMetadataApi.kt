@@ -48,10 +48,13 @@ import java.util.concurrent.TimeUnit
     val durationSeconds: Long? = null, val releaseDate: String? = null,
     val subtitles: List<MetadataSubtitle> = emptyList(), val attributes: Map<String, String> = emptyMap(),
     val payloads: List<MetadataPayload> = emptyList())
-@Keep internal data class MetadataSection(val name: String, val items: List<MetadataRecord>, val url: String? = null)
+@Keep internal data class MetadataSection(val name: String, val items: List<MetadataRecord>, val url: String? = null,
+    val tabKey: String? = null, val page: Int? = null, val hasPrevious: Boolean? = null,
+    val fallback: JsonElement? = null, val warnings: List<String> = emptyList(), val nextUrl: String? = null)
 @Keep internal data class MetadataPage(val items: List<MetadataRecord>, val nextUrl: String? = null,
     val total: Long? = null, val sections: List<MetadataSection> = emptyList(),
-    val filters: Map<String, List<MetadataTerm>> = emptyMap(), val payloads: List<MetadataPayload> = emptyList())
+    val filters: Map<String, List<MetadataTerm>> = emptyMap(), val payloads: List<MetadataPayload> = emptyList(),
+    val tabPages: Map<String, Int> = emptyMap(), val providerFilters: Map<String, List<MetadataTerm>> = emptyMap())
 @Keep internal data class MetadataDetails(val record: MetadataRecord, val episodes: List<MetadataEpisode> = emptyList(),
     val related: List<MetadataRecord> = emptyList(), val sections: List<MetadataSection> = emptyList(),
     val payloads: List<MetadataPayload> = emptyList())

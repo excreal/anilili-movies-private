@@ -9,10 +9,12 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 /** Public Narto HTML/JSON metadata, separate from playback resolution and the UI card model. */
-internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : SiteMetadataApi {
+internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null,
+    private val injectedGet: (suspend (String) -> MetadataResponse)? = null) : SiteMetadataApi {
     override val site = MetadataSite.NARTO
     private val http = MetadataHttp(setOf("narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com"), cookieHeader)
     private val origin = "https://edge.narto-drama.com/".toHttpUrl()
+    private suspend fun get(url: String) = injectedGet?.invoke(url) ?: http.get(url)
 
     override suspend fun browse(query: MetadataBrowseQuery): MetadataPage {
         require(query.page > 0) { "Page must be positive." }
@@ -43,7 +45,7 @@ internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : Si
                 if (query.page > 1) addQueryParameter("page", query.page.toString())
                 query.filters.filterKeys { it !in setOf("lang", "tag", "genre") }.forEach { (key, value) -> addQueryParameter(key, value) }
             }.build()
-        val response = http.get(target.toString())
+        val response = get(target.toString())
         if (response.text.trimStart().startsWith("{")) return jsonPage(response.json().asJsonObject, response.url, response.payload("searchOrProviderPage"))
         val doc = response.document()
         val cards = doc.select("article.card[data-watch-url]").mapNotNull(::card)
@@ -69,14 +71,14 @@ internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : Si
         val target = http.checked(url)
         val (slug, _) = dramaRoute(target, SiteDownloadProvider.NARTO)
         val detailUrl = target.newBuilder().encodedPath("/detail/watch/$slug").build().toString()
-        val response = http.get(detailUrl)
+        val response = get(detailUrl)
         val doc = response.document()
         val base = record(doc)
         var episodes = episodeAnchors(doc)
         var payloads = base.payloads + pageFacts(doc, response.url)
         if (episodes.isNotEmpty()) {
             // The page carries all episode metadata in one document; never request every episode.
-            val hydration = runCatching { http.get(episodes.first().url) }
+            val hydration = runCatching { get(episodes.first().url) }
             hydration.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
             hydration.getOrNull()?.let { page ->
                 val raw = episodeItems(page.text)
@@ -98,7 +100,7 @@ internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : Si
         val target = http.checked(url)
         val (_, number) = dramaRoute(target, SiteDownloadProvider.NARTO)
         require(number != null) { "Select a Narto episode URL." }
-        val response = http.get(target.toString())
+        val response = get(target.toString())
         val doc = response.document()
         val raw = episodeItems(response.text).firstOrNull { it.dramaInt("route_episode_number") == number }
             ?: throw java.io.IOException("Narto did not expose metadata for this episode.")
@@ -111,7 +113,7 @@ internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : Si
     }
 
     override suspend fun taxonomy(): MetadataTaxonomy {
-        val response = http.get(origin.newBuilder().addQueryParameter("lang", "en-US").build().toString())
+        val response = get(origin.newBuilder().addQueryParameter("lang", "en-US").build().toString())
         val doc = response.document()
         val taxonomy = taxonomyFrom(doc)
         val providerPayload = providerSections("")
@@ -131,36 +133,124 @@ internal class NartoMetadataApi(cookieHeader: ((String) -> String)? = null) : Si
         require((provider.isEmpty() || provider.matches(Regex("[a-z0-9_-]+"))) && page > 0)
         val supported = setOf("q", "type_context", "only_tab", "pinedrama_category_id", "flareflow_class_id")
         require(parameters.keys.all { it in supported || it.matches(Regex("tab_pages\\[[a-zA-Z0-9_-]+]")) }) { "Unsupported Narto provider filter." }
+        require(page == 1 || parameters["q"].isNullOrBlank()) { "Provider search does not support pagination." }
         val target = origin.newBuilder().encodedPath("/home/providers/sections")
             .addQueryParameter("provider", provider).addQueryParameter("lang", language)
             .addQueryParameter("target_lang", language)
             .apply { parameters.filterKeys { it !in setOf("provider", "lang", "target_lang", "page") }.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
-        val response = http.get(target.toString())
+        val response = get(target.toString())
         val data = response.json().asJsonObject
         require(data.dramaString("ok") == "true") { "Narto provider metadata is unavailable." }
-        if (page > 1 && parameters.keys.none { it.startsWith("tab_pages[") }) {
+        val searchResponse = isSearchResponse(data)
+        if (page > 1 && parameters.keys.none { it.startsWith("tab_pages[") } && !searchResponse) {
             val pages = data.dramaArray("sections").mapNotNull { it.takeIf { v -> v.isJsonObject }?.asJsonObject?.dramaString("tab_key") }.filter(String::isNotBlank)
+            if (pages.isEmpty()) return response.payload("providerSections")
             val paged = target.newBuilder().apply { pages.forEach { addQueryParameter("tab_pages[$it]", page.toString()) } }.build()
-            return http.get(paged.toString()).payload("providerSections")
+            return get(paged.toString()).payload("providerSections")
         }
         return response.payload("providerSections")
     }
 
 
     private fun jsonPage(data: JsonObject, url: String, payload: MetadataPayload): MetadataPage {
-        require(data.dramaString("ok") == "true" && (data.has("items") || data.has("sections"))) { "Narto returned an invalid metadata page." }
+        val loginRequired = data.dramaBoolean("login_required")
+        require((data.dramaString("ok") == "true" && (data.has("items") || data.has("sections"))) || loginRequired) { "Narto returned an invalid metadata page." }
+        val sourceUrl = runCatching { url.toHttpUrl() }.getOrNull()
+        val searchResponse = isSearchResponse(data) || sourceUrl?.queryParameter("q").isNullOrBlank().not()
+        val requestedTabPages = sourceUrl?.queryParameterNames.orEmpty().mapNotNull { key ->
+            Regex("tab_pages\\[([a-zA-Z0-9_-]+)]").matchEntire(key)?.groupValues?.get(1)?.let { tab ->
+                sourceUrl?.queryParameter(key)?.toIntOrNull()?.let { tab to it }
+            }
+        }.toMap()
+        val tabPages = data.objectValue("tab_pages")?.entrySet()?.mapNotNull { (key, value) ->
+            value.asString.toIntOrNull()?.let { key to it }
+        }?.toMap().orEmpty()
         val sections = data.dramaArray("sections").mapNotNull { value ->
             val section = value.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-            MetadataSection(section.dramaString("tab_label", "tab_key"), section.dramaArray("items").mapNotNull { jsonCard(it, url) }, url)
+            val tabKey = section.dramaString("tab_key").takeIf(String::isNotBlank)
+            val items = section.dramaArray("items").mapNotNull { jsonCard(it, url) }
+            val actualPage = section.dramaString("page").toIntOrNull()
+                ?: tabKey?.let(tabPages::get)
+                ?: tabKey?.let(requestedTabPages::get)
+            val requestedPage = tabKey?.let(requestedTabPages::get)
+            val continuation = if (!searchResponse && tabKey != null && items.isNotEmpty() && actualPage != null &&
+                actualPage in 1 until 500 && (requestedPage == null || actualPage >= requestedPage) &&
+                sourceUrl?.queryParameter("q").isNullOrBlank()) {
+                sourceUrl?.newBuilder()?.apply {
+                    removeAllQueryParameters("only_tab")
+                    addQueryParameter("only_tab", tabKey)
+                    removeAllQueryParameters("tab_pages[$tabKey]")
+                    addQueryParameter("tab_pages[$tabKey]", (actualPage + 1).toString())
+                }?.build()?.toString()?.takeIf { it != url }
+            } else null
+            MetadataSection(section.dramaString("tab_label", "tab_key"), items, url,
+                tabKey = tabKey, page = actualPage,
+                hasPrevious = section.get("has_prev")?.takeUnless { it.isJsonNull }?.asBoolean,
+                fallback = section.get("fallback")?.takeUnless { it.isJsonNull }?.deepCopy(),
+                warnings = (jsonStrings(section.get("warnings")) + jsonStrings(section.get("warning"))).distinct(), nextUrl = continuation)
         }
         val direct = data.dramaArray("items").mapNotNull { jsonCard(it, url) }
         val items = (direct + sections.flatMap { it.items }).distinctBy { it.url }
         val providers = data.dramaArray("providers").mapNotNull { value -> value.takeIf { it.isJsonObject }?.asJsonObject?.let {
             MetadataTerm(it.dramaString("label"), it.dramaString("key"))
         } }
-        val filters = if (providers.isEmpty()) emptyMap() else mapOf("providers" to providers)
-        return MetadataPage(items, sections = sections, filters = filters, payloads = listOf(payload))
+        val rawProviderFilters = data.objectValue("provider_filters")
+        val providerFilters = rawProviderFilters?.entrySet()?.filter { (key, _) -> key !in setOf("pinedrama", "flareflow") }?.associateNotNull { (key, value) ->
+            key to jsonTerms(value)
+        }?.toMutableMap() ?: mutableMapOf()
+        rawProviderFilters?.objectValue("pinedrama")?.arrayValue("categories")?.let { categories ->
+            if (categories.size() > 0) providerFilters["pinedrama_category_id"] = jsonTerms(categories)
+        }
+        rawProviderFilters?.objectValue("flareflow")?.arrayValue("classes")?.let { classes ->
+            if (classes.size() > 0) providerFilters["flareflow_class_id"] = jsonTerms(classes)
+        }
+        val filters = buildMap {
+            if (providers.isNotEmpty()) put("providers", providers)
+            putAll(providerFilters)
+        }
+        val next = sections.singleOrNull()?.nextUrl
+        return MetadataPage(items, nextUrl = next, sections = sections, filters = filters,
+            payloads = listOf(payload), tabPages = tabPages, providerFilters = providerFilters)
     }
+
+    private fun jsonStrings(value: JsonElement?): List<String> = when {
+        value == null || value.isJsonNull -> emptyList()
+        value.isJsonArray -> value.asJsonArray.mapNotNull { it.takeIf(JsonElement::isJsonPrimitive)?.asString?.takeIf(String::isNotBlank) }
+        value.isJsonPrimitive -> listOf(value.asString).filter(String::isNotBlank)
+        else -> emptyList()
+    }
+
+    private fun isSearchResponse(data: JsonObject): Boolean = data.dramaBoolean("login_required") ||
+        data.dramaBoolean("search_mode") || data.dramaString("search_query").isNotBlank()
+
+    private fun JsonObject.objectValue(key: String): JsonObject? = get(key)?.takeIf { it.isJsonObject }?.asJsonObject
+    private fun JsonObject.arrayValue(key: String): com.google.gson.JsonArray? = get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+    private fun JsonObject.dramaBoolean(key: String): Boolean = get(key)?.let { value ->
+        value.isJsonPrimitive && (runCatching { value.asBoolean }.getOrDefault(false) || value.asString.equals("true", true))
+    } ?: false
+
+    private fun jsonTerms(value: JsonElement): List<MetadataTerm> {
+        val values = if (value.isJsonArray) value.asJsonArray.toList() else if (value.isJsonObject) value.asJsonObject.entrySet().map { (key, node) ->
+            if (node.isJsonObject) node.asJsonObject.deepCopy().apply { if (!has("key")) addProperty("key", key) }
+            else JsonObject().apply { addProperty("key", key); add("label", node) }
+        } else emptyList()
+        return values.mapNotNull { item ->
+            when {
+                item.isJsonPrimitive -> item.asString.takeIf(String::isNotBlank)?.let { MetadataTerm(it) }
+                item.isJsonObject -> item.asJsonObject.let { obj ->
+                    val name = obj.dramaString("label", "name", "title", "value", "category_name", "class_name")
+                    val id = obj.dramaString("id", "key", "value", "category_id", "class_id").takeIf(String::isNotBlank)
+                    if (name.isBlank() && id.isNullOrBlank()) null else MetadataTerm(name.ifBlank { id.orEmpty() }, id,
+                        url = obj.dramaString("url").takeIf(String::isNotBlank),
+                        attributes = obj.entrySet().filter { it.value.isJsonPrimitive }.associate { it.key to it.value.asString })
+                }
+                else -> null
+            }
+        }
+    }
+
+    private inline fun <K, V, R> Iterable<Map.Entry<K, V>>.associateNotNull(transform: (Map.Entry<K, V>) -> Pair<K, R>?): Map<K, R> =
+        mapNotNull(transform).toMap()
 
     private fun jsonCard(value: JsonElement, base: String): MetadataRecord? {
         val data = value.takeIf { it.isJsonObject }?.asJsonObject ?: return null
