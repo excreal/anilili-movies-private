@@ -27,5 +27,6 @@ Reference: `/root/Anilili` source, plus the Android Developers accessibility and
 ## Verification still needed
 
 - [x] `:app:compileDebugKotlin` succeeds.
+- [x] Narto playback parsing recognizes both the opaque signed HLS fixture and the Flash Sale episode's opaque MP4 source (`SiteDownloadSourcesTest`).
 - [ ] Device visual and interaction pass. `adb devices -l` currently reports no connected device, so screenshots and live gesture checks are unavailable in this workspace.
 - [ ] Recheck the rendered layout on a narrow phone and a landscape device after installing the release APK.
