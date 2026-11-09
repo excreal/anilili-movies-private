@@ -2,6 +2,7 @@ package com.example.animepahedl
 
 import com.google.gson.Gson
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,6 +17,16 @@ class CatalogViewModelTest {
 
         assertEquals(items, restored.items)
         assertEquals(original.nextUrl, restored.nextUrl)
+    }
+
+    @Test fun kisskhOldCacheGetsBannerAspectWithoutChangingOtherSources() {
+        val oldCache = CatalogPage(listOf(CatalogItem("True Beauty", "https://kisskh.do/Drama/True-Beauty?id=1", "banner")))
+
+        val kisskh = catalogPageForSource(CatalogSource.KISSKH, oldCache)
+        val dramatip = catalogPageForSource(CatalogSource.DRAMATIP, oldCache)
+
+        assertTrue(kisskh.items.single().wideArtwork)
+        assertFalse(dramatip.items.single().wideArtwork)
     }
 
     @Test fun failedRefreshRetainsResultsAndContinuationForSameQueryAndSource() {

@@ -38,11 +38,7 @@ internal fun CatalogScreen(
     val heroBackdrop = remember { dev.chrisbanes.haze.HazeState() }
     val grid = rememberLazyGridState()
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
-    val columns = when {
-        model.source == CatalogSource.KISSKH -> if (LocalConfiguration.current.screenWidthDp >= 600) 3 else 2
-        LocalConfiguration.current.screenWidthDp >= 600 -> 4
-        else -> 3
-    }
+    val columns = if (LocalConfiguration.current.screenWidthDp >= 600) 4 else 3
     LaunchedEffect(grid, model.items.size, model.loading, browseMode) {
         snapshotFlow { browseMode && model.items.isNotEmpty() && !model.loading && model.nextUrl != null &&
             (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= grid.layoutInfo.totalItemsCount - 5 }
@@ -51,19 +47,21 @@ internal fun CatalogScreen(
     LazyVerticalGrid(state = grid, columns = GridCells.Fixed(columns),
         contentPadding = PaddingValues(bottom = 108.dp), horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalArrangement = Arrangement.spacedBy(if (browseMode) 12.dp else 0.dp)) {
-        if (!browseMode) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (!browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "home-hero") {
             Box(Modifier.fillMaxWidth()) {
                 if (model.items.isNotEmpty()) CatalogHero(model.items, images, onOpen, backdrop = heroBackdrop)
                 else Spacer(Modifier.height(100.dp))
                 ReferenceHomeChrome(model, heroBackdrop, onLink, onDownloads)
             }
         }
-        if (browseMode) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "browse-controls") {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Browse", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge.copy(fontSize = 32.sp), fontWeight = FontWeight.Black)
                     TextButton(onClick = model::reset) { Text("Reset") }
-                    IconButton(onClick = { categories = !categories }) { AppSymbol(AppIcon.Expand, description = "Toggle sources") }
+                    IconButton(onClick = { categories = !categories }) {
+                        AppSymbol(AppIcon.Expand, description = if (categories) "Hide source shortcuts" else "Show source shortcuts")
+                    }
                 }
                 Text("Find your next story", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
@@ -80,7 +78,7 @@ internal fun CatalogScreen(
                 }
             }
         }
-        if (browseMode && categories) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (browseMode && categories) item(span = { GridItemSpan(maxLineSpan) }, contentType = "source-shortcuts") {
             Column(Modifier.fillMaxWidth()) {
             Text("Sources", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -92,26 +90,26 @@ internal fun CatalogScreen(
             HorizontalDivider(Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
-        if (!browseMode && continueWatching != null) item(span = { GridItemSpan(maxLineSpan) }) { continueWatching() }
+        if (!browseMode && continueWatching != null) item(span = { GridItemSpan(maxLineSpan) }, contentType = "continue-watching") { continueWatching() }
         if (!browseMode && model.items.isNotEmpty()) catalogHomeSections(model.items, images, columns, expanded,
             toggle = { name -> expanded = if (name in expanded) expanded - name else expanded + name },
             onOpen = onOpen, onMore = model::more, loading = model.loading, hasMore = model.nextUrl != null)
-        if (browseMode) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "results-heading") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(model.filterLabel ?: if (model.query.isNotBlank()) "Results for “${model.query}”" else "Discover ${model.source.label}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("${model.items.size}${if (model.nextUrl != null) "+" else ""} results", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (browseMode) items(model.items, key = { it.url }) { entry ->
+        if (browseMode) items(model.items, key = { it.url }, contentType = { "catalog-poster" }) { entry ->
             CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.padding(horizontal = 5.dp))
         }
-        if (model.loading) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (model.loading) item(span = { GridItemSpan(maxLineSpan) }, contentType = "loading-indicator") {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { WaterFillLogoIndicator(size = 64.dp) }
         }
-        model.error?.let { message -> item(span = { GridItemSpan(maxLineSpan) }) {
+        model.error?.let { message -> item(span = { GridItemSpan(maxLineSpan) }, contentType = "catalog-error") {
             Column(Modifier.padding(16.dp)) { Text(message, color = MaterialTheme.colorScheme.error); TextButton(onClick = model::refresh) { Text("Retry") } }
         } }
-        if (!model.loading && model.error == null && model.items.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (!model.loading && model.error == null && model.items.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, contentType = "catalog-empty") {
             Text("No titles found.", Modifier.padding(16.dp))
         }
     }
@@ -124,17 +122,5 @@ internal fun CatalogScreen(
             }
         }
         Spacer(Modifier.navigationBarsPadding().height(16.dp))
-    }
-}
-
-@Composable
-private fun RemoteSourceChips(model: CatalogViewModel) {
-    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(model.availableSources, key = { it.name }) { source ->
-            FilterChip(selected = model.source == source, onClick = { model.select(source) }, label = { Text(source.label) }, shape = androidx.compose.foundation.shape.CircleShape,
-                colors = FilterChipDefaults.filterChipColors(containerColor = Color.Black.copy(alpha = .82f), labelColor = Color.White,
-                    selectedContainerColor = Color.White, selectedLabelColor = Color.Black),
-                border = androidx.compose.foundation.BorderStroke(1.dp, if (model.source == source) Color.White else Color.White.copy(alpha = .35f)))
-        }
     }
 }

@@ -73,6 +73,10 @@ private const val MAX_CATALOG_CACHE_BYTES = 4_000_000L
 internal fun catalogCacheJson(page: CatalogPage, gson: com.google.gson.Gson = com.google.gson.Gson()): String? =
     gson.toJson(page).takeIf { it.toByteArray(Charsets.UTF_8).size <= MAX_CATALOG_CACHE_BYTES }
 
+/** Older cache files predate KissKH's banner layout field; normalize them when read. */
+internal fun catalogPageForSource(source: CatalogSource, page: CatalogPage): CatalogPage =
+    if (source == CatalogSource.KISSKH) page.copy(items = page.items.map { it.copy(wideArtwork = true) }) else page
+
 /** Results may survive a failed forced refresh only while the displayed query/source identity is unchanged. */
 internal fun shouldPreserveCatalogResultsOnRefresh(force: Boolean, displayedKey: String?, requestKey: String): Boolean =
     force && displayedKey == requestKey
@@ -107,11 +111,14 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     private val cacheDir = java.io.File(application.cacheDir, "catalog-pages").apply { mkdirs() }
     private val gson = com.google.gson.Gson()
     private fun cacheFile(key: String) = java.io.File(cacheDir, java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) } + ".json")
-    private suspend fun readCache(key: String): Cached? {
-        memory[key]?.let { return it }
-        return withContext(Dispatchers.IO) {
+    private suspend fun readCache(key: String, source: CatalogSource): Cached? {
+        val cached = memory[key] ?: withContext(Dispatchers.IO) {
             runCatching { val file = cacheFile(key); if (!file.exists() || file.length() > MAX_CATALOG_CACHE_BYTES) null else Cached(file.lastModified(), gson.fromJson(file.readText(), CatalogPage::class.java)) }.getOrNull()
-        }?.also { memory[key] = it; if (memory.size > 8) memory.remove(memory.keys.first()) }
+        } ?: return null
+        val normalized = cached.copy(page = catalogPageForSource(source, cached.page))
+        memory[key] = normalized
+        if (memory.size > 8) memory.remove(memory.keys.first())
+        return normalized
     }
     private suspend fun saveCache(key: String, page: CatalogPage) {
         val json = catalogCacheJson(page, gson)
@@ -135,7 +142,6 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         CatalogSource.EROTICMV -> EroticMvCatalog(cookieHeader = cookies::headerFor)
         CatalogSource.KISSKH -> KisskhCatalog(application.cacheDir, cookies::headerFor)
     } } }
-    private fun api(): SiteCatalog = adapters.getValue(source)
     init {
         load(false)
         viewModelScope.launch {
@@ -170,8 +176,9 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     fun more() { if (!loading && nextUrl != null) load(true) }
     private fun load(append: Boolean, delayMs: Long = 0, force: Boolean = false) {
         job?.cancel()
-        val adapter = api(); val term = query.trim(); val next = nextUrl; val filter = activeFilter
-        val key = source.name + ":" + (filter?.let { "${it.first}:${it.second.url ?: it.second.name}" } ?: term.lowercase())
+        val selectedSource = source
+        val adapter = adapters.getValue(selectedSource); val term = query.trim(); val next = nextUrl; val filter = activeFilter
+        val key = selectedSource.name + ":" + (filter?.let { "${it.first}:${it.second.url ?: it.second.name}" } ?: term.lowercase())
         if (!append && !shouldPreserveCatalogResultsOnRefresh(force, displayedKey, key)) {
             items = emptyList(); nextUrl = null; displayedKey = null
         }
@@ -180,7 +187,7 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
             try {
                 delay(delayMs)
                 if (!append) {
-                    readCache(key)?.let { cached ->
+                    readCache(key, selectedSource)?.let { cached ->
                         ensureActive(); items = cached.page.items; nextUrl = cached.page.nextUrl; displayedKey = key
                         if (!force && System.currentTimeMillis() - cached.time < 15 * 60_000) return@launch
                     }
