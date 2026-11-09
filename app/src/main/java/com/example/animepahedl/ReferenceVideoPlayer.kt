@@ -41,8 +41,6 @@ import com.anilili.ui.theme.wallpaperSeed
 import com.anilili.ui.watch.*
 import kotlinx.coroutines.*
 
-internal val SiteDownloadProvider.usesReferencePlayer get() = !isShortDrama
-
 private data class ReferenceResolved(val episode: SiteDownloadEpisode, val streams: List<StreamItem>,
     val subtitles: List<MediaSubtitle>, val local: Boolean, val localAvailable: Boolean)
 
@@ -55,7 +53,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
     val context = LocalContext.current
     val activity = context.findActivity()
     val profile = rememberAppDeviceProfile()
-    val landscapeOnlyHost = !series.provider.isShortDrama
+    val landscapeOnlyHost = series.provider.usesReferencePlayer
     // Legacy offline queues can be reconstructed as DIRECT series whose episode URLs
     // are persisted content:// or file:// URIs. Library resume must play those URIs
     // locally instead of sending them through the online source resolver.
