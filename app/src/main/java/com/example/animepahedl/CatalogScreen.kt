@@ -38,6 +38,7 @@ internal fun CatalogScreen(
     var categories by remember { mutableStateOf(true) }
     val heroBackdrop = remember { dev.chrisbanes.haze.HazeState() }
     val grid = rememberLazyGridState()
+    val phoneCardWidth = ((LocalConfiguration.current.screenWidthDp - 62) / 3.35f).coerceIn(108f, 150f).dp
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
     val columns = if (LocalConfiguration.current.screenWidthDp >= 600) 4 else 3
     val searchSourceName = if (model.source == CatalogSource.KISSKH) "KissKH" else model.source.label
@@ -95,7 +96,7 @@ internal fun CatalogScreen(
             }
         }
         if (!browseMode && continueWatching != null) item(span = { GridItemSpan(maxLineSpan) }, contentType = "continue-watching") { continueWatching() }
-        if (!browseMode && model.items.isNotEmpty()) catalogHomeSections(model.items, images, columns, expanded,
+        if (!browseMode && model.items.isNotEmpty()) catalogHomeSections(model.items, images, columns, phoneCardWidth, expanded,
             toggle = { name -> expanded = if (name in expanded) expanded - name else expanded + name },
             onOpen = onOpen, onMore = model::more, loading = model.loading, hasMore = model.nextUrl != null)
         if (browseMode) item(span = { GridItemSpan(maxLineSpan) }, contentType = "results-heading") {

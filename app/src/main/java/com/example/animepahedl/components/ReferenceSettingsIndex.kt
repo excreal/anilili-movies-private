@@ -60,16 +60,16 @@ internal fun ReferenceSettingsIndex(onOpen: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
     val tiles = settingsSectionTiles.filter { it.title.contains(query, ignoreCase = true) }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 108.dp)) {
-        item {
+        item(contentType = "settings-search") {
             PageSearchField(query, { query = it }, "Search settings", "Clear search",
                 Modifier.padding(bottom = 10.dp))
         }
-        items(tiles.chunked(3), key = { it.first().id }) { row ->
+        items(tiles.chunked(3), key = { it.first().id }, contentType = { "settings-card-row" }) { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { tile -> SettingsSectionCard(tile, { onOpen(tile.id) }, Modifier.weight(1f)) }
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
-        if (tiles.isEmpty()) item { Text("No matching settings", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (tiles.isEmpty()) item(contentType = "settings-empty") { Text("No matching settings", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

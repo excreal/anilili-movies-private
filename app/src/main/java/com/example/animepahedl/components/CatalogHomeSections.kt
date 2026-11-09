@@ -9,6 +9,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -18,13 +23,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.foundation.lazy.rememberLazyListState
-import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -33,9 +34,9 @@ import androidx.compose.ui.unit.sp
 import coil.ImageLoader
 import com.example.animepahedl.CatalogItem
 
-/** Same MediaRail layout, with expanded rows owned by the outer lazy feed. */
+/** Home rails follow Anilili's carousel/grid and explicit load-more behavior. */
 internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSections(
-    titles: List<CatalogItem>, images: ImageLoader, columns: Int, expanded: List<String>,
+    titles: List<CatalogItem>, images: ImageLoader, columns: Int, phoneCardWidth: androidx.compose.ui.unit.Dp, expanded: List<String>,
     toggle: (String) -> Unit, onOpen: (String) -> Unit, onMore: () -> Unit, loading: Boolean, hasMore: Boolean,
 ) {
     val sections = listOf("Popular" to titles.take(10), "Discover" to titles.drop(10))
@@ -62,19 +63,35 @@ internal fun androidx.compose.foundation.lazy.grid.LazyGridScope.catalogHomeSect
                     repeat(sectionColumns - rows[index].size) { Spacer(Modifier.weight(1f)) }
                 }
             }
+            if (name == "Discover" && hasMore) item(key = "more:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, contentType = "pagination-action") {
+                Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                    OutlinedButton(onClick = onMore, enabled = !loading, shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
+                        if (loading) {
+                            androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (loading) "Loading…" else "Load More Discover", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         } else item(key = "rail:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
             contentType = { if (wideArtwork) "banner-carousel" else "poster-carousel" }) {
-            val rail = rememberLazyListState()
-            LaunchedEffect(rail, entries.size, loading, hasMore) {
-                snapshotFlow { name == "Discover" && hasMore && !loading && (rail.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= entries.size - 3 }
-                    .distinctUntilChanged().collect { if (it) onMore() }
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(entries, key = { it.url }, contentType = { "catalog-card" }) { entry ->
+                    CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.width(if (entry.wideArtwork) phoneCardWidth * (16f / 9f) / (2f / 3f) else phoneCardWidth))
+                }
+                if (name == "Discover" && hasMore) item(key = "more:$name", contentType = "pagination-action") {
+                    Column(Modifier.width(92.dp).height(160.dp).clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))
+                        .clickable(enabled = !loading, role = Role.Button, onClickLabel = "Load more Discover", onClick = onMore),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        if (loading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.GridView, contentDescription = "Load more Discover")
+                        Text(if (loading) "Loading…" else "Load More", style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
             }
-            LazyRow(state = rail, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(entries, key = { it.url }) { entry -> CatalogPosterCard(entry, images, { onOpen(entry.url) }, Modifier.width(108.dp)) }
-            }
-        }
-        if (name == "Discover" && name in expanded && hasMore) item(key = "more:$name", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, contentType = "pagination-trigger") {
-            LaunchedEffect(entries.size, loading) { if (!loading) onMore() }
         }
     }
 }
