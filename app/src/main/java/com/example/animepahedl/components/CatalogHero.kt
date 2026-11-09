@@ -60,9 +60,6 @@ internal fun CatalogHero(items: List<CatalogItem>, images: ImageLoader, onOpen: 
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Black, fontSize = 25.sp, lineHeight = 30.sp, shadow = androidx.compose.ui.graphics.Shadow(Color.Black, androidx.compose.ui.geometry.Offset(0f, 2f), 10f)),
                         textAlign = TextAlign.Center, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-                Surface(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 128.dp, end = 16.dp), shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
-                    Text("${index + 1} / ${featured.size}", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                }
             }
         }
         Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

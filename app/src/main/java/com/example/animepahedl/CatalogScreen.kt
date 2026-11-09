@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,7 @@ internal fun CatalogScreen(
     val grid = rememberLazyGridState()
     var expanded by androidx.compose.runtime.saveable.rememberSaveable(model.source) { mutableStateOf(emptyList<String>()) }
     val columns = if (LocalConfiguration.current.screenWidthDp >= 600) 4 else 3
+    val searchSourceName = if (model.source == CatalogSource.KISSKH) "KissKH" else model.source.label
     LaunchedEffect(grid, model.items.size, model.loading, browseMode) {
         snapshotFlow { browseMode && model.items.isNotEmpty() && !model.loading && model.nextUrl != null &&
             (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= grid.layoutInfo.totalItemsCount - 5 }
@@ -66,12 +68,14 @@ internal fun CatalogScreen(
                 Text("Find your next story", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(model.query, model::edit, Modifier.weight(1f), singleLine = true,
-                        placeholder = { Text("Search ${model.source.label}…") }, shape = MaterialTheme.shapes.medium,
+                    OutlinedTextField(model.query, model::edit,
+                        Modifier.weight(1f).semantics { contentDescription = "Search $searchSourceName" }, singleLine = true,
+                        placeholder = { Text("Search $searchSourceName…", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                        shape = MaterialTheme.shapes.medium,
                         leadingIcon = { AppSymbol(AppIcon.Browse) },
                         trailingIcon = { if (model.query.isNotBlank()) IconButton(onClick = { model.edit("") }) { AppSymbol(AppIcon.Close, description = "Clear search") } },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { model.refresh() }))
-                    FilledIconButton(onClick = { filters = true }, modifier = Modifier.size(56.dp),
+                    FilledIconButton(onClick = { filters = true }, modifier = Modifier.size(48.dp),
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)) {
                         AppSymbol(AppIcon.Sort, description = "Select source")
                     }
@@ -83,7 +87,7 @@ internal fun CatalogScreen(
             Text("Sources", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(model.availableSources, key = { it.name }) { source ->
-                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.heightIn(min = 48.dp).semantics { selected = model.source == source }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
+                    OutlinedButton(onClick = { model.select(source) }, modifier = Modifier.semantics { selected = model.source == source }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp), shape = MaterialTheme.shapes.small,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, containerColor = if (model.source == source) Color.White.copy(alpha = .12f) else Color.Transparent)) { Text(source.label) }
                 }
             }

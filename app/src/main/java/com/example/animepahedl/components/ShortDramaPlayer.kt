@@ -1,12 +1,12 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
-
 package com.example.animepahedl.components
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.animepahedl.DownloadRow
 import com.example.animepahedl.DownloadStore
 import com.example.animepahedl.SavedShowsStore
@@ -38,6 +38,12 @@ internal fun ShortDramaPlayer(rows: List<DownloadRow>, initialId: String, onClos
         resolve = { index ->
             val uri = playlist[index].savedUri.toUri()
             require(uri.scheme == "content") { "Relink this saved video before playing it." }
-            DefaultMediaSourceFactory(context.applicationContext).createMediaSource(MediaItem.fromUri(uri))
+            val mimeType = context.contentResolver.getType(uri)?.takeIf { it.startsWith("video/") } ?: MimeTypes.VIDEO_MP4
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                require(descriptor.length != 0L) { "This saved video is empty. Relink it in Downloads." }
+            } ?: error("This saved video is unavailable. Relink it in Downloads.")
+            val mediaItem = MediaItem.Builder().setUri(uri).setMimeType(mimeType).build()
+            ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context.applicationContext))
+                .createMediaSource(mediaItem)
         }, external = { onExternal(playlist[it]) })
 }

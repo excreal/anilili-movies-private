@@ -23,8 +23,8 @@ internal fun LibraryScreen(store: SavedShowsStore, history: List<SiteDownloadSer
     val saved = remember(revision) { store.all() }
     LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 108.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { Text("Library", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black) }
-        item {
+        item(contentType = "library-title") { Text("Library", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black) }
+        item(contentType = "continue-watching") {
             if (history.isNotEmpty()) ContinueWatchingRow(history, images, onResume,
                 onRemove = onRemoveFromContinueWatching, onMarkCompleted = onMarkCompleted)
             else Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -32,25 +32,25 @@ internal fun LibraryScreen(store: SavedShowsStore, history: List<SiteDownloadSer
                 Text("Your unfinished videos appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item {
+        item(contentType = "saved-shows-heading") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Saved shows", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("${saved.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (saved.isEmpty()) item {
+        if (saved.isEmpty()) item(contentType = "saved-shows-empty") {
             Text("Save a show from its details page or while watching.", Modifier.padding(horizontal = 16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else item {
+        } else item(contentType = "saved-shows-rail") {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(saved, key = { it.provider.name + it.id }) { series ->
+                items(saved, key = { it.provider.name + it.id }, contentType = { "saved-show-card" }) { series ->
                     val summary = rememberSeriesPlaybackSummary(series)
                     Column(Modifier.width(108.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Box {
+                        Box(Modifier.fillMaxWidth()) {
                             CatalogPosterCard(CatalogItem(series.title, series.url, series.posterThumbnail(), wideArtwork = series.provider == SiteDownloadProvider.KISSKH), images,
-                                onClick = { onDetails(series) })
+                                onClick = { onDetails(series) }, modifier = Modifier.width(108.dp))
                             IconButton(onClick = { store.toggle(series) }, modifier = Modifier.align(Alignment.TopEnd)) {
-                                AppSymbol(AppIcon.BookmarkFilled, description = "Unsave ${series.title}")
+                                AppSymbol(AppIcon.BookmarkFilled, Modifier.offset(x = 6.dp, y = (-6).dp), description = "Unsave ${series.title}")
                             }
                         }
                         Text(summary.resumeLabel ?: summary.watchLabel, style = MaterialTheme.typography.labelSmall,

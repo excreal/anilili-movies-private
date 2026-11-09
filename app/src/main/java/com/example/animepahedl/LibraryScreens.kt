@@ -180,7 +180,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
     LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("downloads-list"), state = listState,
         contentPadding = PaddingValues(start = pagePadding, end = pagePadding, top = 8.dp, bottom = 108.dp),
         verticalArrangement = Arrangement.spacedBy(if (openGroup == null) 10.dp else 8.dp)) {
-        if (!model.outputAccessGranted || model.outputCheckRequired || model.checkingExistingFiles) item(key = "output-folder-access") {
+        if (!model.outputAccessGranted || model.outputCheckRequired || model.checkingExistingFiles) item(key = "output-folder-access", contentType = "folder-access") {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (model.checkingExistingFiles) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
                 Text(if (model.checkingExistingFiles) "Checking existing videos…" else "Link your downloads folder to reuse saved videos.",
@@ -188,11 +188,11 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                 if (!model.checkingExistingFiles) TextButton(onClick = onChooseFolder) { Text("Choose folder") }
             }
         }
-        siteDownload.pending?.let { pending -> item(key = "site-preparation") {
+        siteDownload.pending?.let { pending -> item(key = "site-preparation", contentType = "preparation-status") {
             PreparationStatusRow(siteDownload.preparationStatus, pending.episodes.size, siteDownload::pausePreparation,
                 siteDownload::resumePreparation, siteDownload::discardPreparation, onChooseFolder = onChooseFolder)
         } }
-        model.downloadNotice?.let { notice -> item {
+        model.downloadNotice?.let { notice -> item(contentType = "download-notice") {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
                 Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(notice, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
@@ -200,7 +200,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                 }
             }
         } }
-        if (openGroup == null && allRows.isNotEmpty()) item {
+        if (openGroup == null && allRows.isNotEmpty()) item(contentType = "download-filters") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(query, { query = it; model.clearDownloadSelection() },
                     modifier = Modifier.fillMaxWidth().testTag("downloads-search").semantics { contentDescription = "Search downloads" },
@@ -227,7 +227,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                 Text("${snapshot.groups.size} titles", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (visible.isEmpty() && snapshot.source === allRows) item {
+        if (visible.isEmpty() && snapshot.source === allRows) item(contentType = "download-empty-state") {
             Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (query.isNotBlank()) "No matching downloads" else "Nothing downloaded yet", style = MaterialTheme.typography.titleMedium)
                 Text(if (query.isNotBlank()) "Try a title or episode number." else "Save videos from Explore to keep them here.",
@@ -236,7 +236,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
             }
         }
         if (openGroup == null) {
-            items(snapshot.groups.chunked(posterColumns), key = { "poster-row:${it.first().first}" }) { groups ->
+            items(snapshot.groups.chunked(posterColumns), key = { "poster-row:${it.first().first}" }, contentType = { "download-series-row" }) { groups ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     groups.forEach { (groupId, episodes) ->
                         val title = episodes.first().showTitle.ifBlank { episodes.first().title.substringBefore(" · ") }
@@ -270,7 +270,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
             }
         }
         snapshot.groups.filter { it.first == openGroup }.forEach { (_, episodes) ->
-            items(episodes, key = { it.id }) { row ->
+            items(episodes, key = { it.id }, contentType = { "download-episode-row" }) { row ->
                 val parts = row.title.split(" · ")
                 var menu by remember { mutableStateOf(false) }
                 val pendingRow = siteDownload.isPendingRow(row.id)
@@ -347,7 +347,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                     })
             }
         }
-        if (openGroup != null && !model.selectionMode && openRows.isNotEmpty()) item(key = "remove-series") {
+        if (openGroup != null && !model.selectionMode && openRows.isNotEmpty()) item(key = "remove-series", contentType = "remove-series-action") {
             TextButton(onClick = { deleteGroup = openRows }, modifier = Modifier.padding(top = 8.dp)) {
                 AppSymbol(AppIcon.Delete)
                 Text("Remove all episodes", Modifier.padding(start = 6.dp))
@@ -482,37 +482,37 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when (section) {
                 "downloads" -> {
-                    item {
+                    item(contentType = "setting-switch") {
                         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             AppSymbol(AppIcon.Download, modifier = Modifier.size(24.dp))
                             Column(Modifier.weight(1f)) { Text("Download on Wi-Fi only", style = MaterialTheme.typography.titleSmall); Text("Pause downloads on metered networks", style = MaterialTheme.typography.bodySmall) }
                             Switch(checked = model.unmeteredOnly, onCheckedChange = model::setUnmetered)
                         }
                     }
-                    item { SettingsRow(AppIcon.Download, "Download speed", "${model.simultaneousDownloads} at a time") { choice = "speed" } }
-                    item { SettingsRow(AppIcon.Folder, "Download storage", outputLabel(model)) { choice = "storage" } }
-                    item { SettingsRow(AppIcon.Folder, "Storage and recovery", "Check free space and missing files") { model.inspectLibrary(); showRecovery = true } }
+                    item(contentType = "settings-row") { SettingsRow(AppIcon.Download, "Download speed", "${model.simultaneousDownloads} at a time") { choice = "speed" } }
+                    item(contentType = "settings-row") { SettingsRow(AppIcon.Folder, "Download storage", outputLabel(model)) { choice = "storage" } }
+                    item(contentType = "settings-row") { SettingsRow(AppIcon.Folder, "Storage and recovery", "Check free space and missing files") { model.inspectLibrary(); showRecovery = true } }
                 }
                 "player" -> {
-                    item { PlaybackPreference("play-on-open", "Play when an episode opens", "Start playing automatically") }
-                    item { PlaybackPreference("auto-next", "Play the next episode", "Continue automatically when an episode finishes") }
-                    item { Text("Downloaded episodes play first. Your place is shared between online and downloaded playback.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    item(contentType = "playback-setting") { PlaybackPreference("play-on-open", "Play when an episode opens", "Start playing automatically") }
+                    item(contentType = "playback-setting") { PlaybackPreference("auto-next", "Play the next episode", "Continue automatically when an episode finishes") }
+                    item(contentType = "settings-description") { Text("Downloaded episodes play first. Your place is shared between online and downloaded playback.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
-                "notifications" -> { item { NotificationPreferences() } }
-                "subtitles" -> { item { ProviderSubtitleSettings() } }
+                "notifications" -> { item(contentType = "notification-settings") { NotificationPreferences() } }
+                "subtitles" -> { item(contentType = "subtitle-settings") { ProviderSubtitleSettings() } }
                 "servers" -> {
-                    item { CatalogSourceSettingRow("Enabled sources", "Sources available on Home and Browse", "${catalogSourceOrder.enabled.size} of ${catalogSourceOrder.order.size}") { editEnabledSources = true } }
-                    item {
+                    item(contentType = "source-setting") { CatalogSourceSettingRow("Enabled sources", "Sources available on Home and Browse", "${catalogSourceOrder.enabled.size} of ${catalogSourceOrder.order.size}") { editEnabledSources = true } }
+                    item(contentType = "source-setting") {
                         val enabledInOrder = catalogSourceOrder.order.filter { it in catalogSourceOrder.enabled }
                         val summary = enabledInOrder.take(2).joinToString(" · ") { it.label } +
                             if (enabledInOrder.size > 2) " +${enabledInOrder.size - 2}" else ""
                         CatalogSourceSettingRow("Source priority", "Order used for the source chips on Home and Browse", summary) { editSourceOrder = true }
                     }
-                    item { CatalogSourceSettingRow("Browser cookies", "Manage saved verification for video sources", "") { showSiteCookies = true } }
+                    item(contentType = "source-setting") { CatalogSourceSettingRow("Browser cookies", "Manage saved verification for video sources", "") { showSiteCookies = true } }
                 }
-                "accounts" -> { item { Text("Saved on this device", style = MaterialTheme.typography.titleMedium) }; item { Text("Your saved shows and viewing progress stay on this device.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                "accounts" -> { item(contentType = "settings-heading") { Text("Saved on this device", style = MaterialTheme.typography.titleMedium) }; item(contentType = "settings-description") { Text("Your saved shows and viewing progress stay on this device.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                 "appearance" -> {
-                    item {
+                    item(contentType = "appearance-settings") {
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Theme", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Text("Choose a color theme for the app. It updates immediately.",
@@ -530,15 +530,15 @@ internal fun SettingsScreen(model: DownloaderViewModel, onAbout: () -> Unit, sit
                         }
                     }
                 }
-                "content" -> { item { Text("Short dramas, K-dramas and movies", style = MaterialTheme.typography.titleMedium) }; item { Text("Choose a source from Home or Browse to explore its catalog.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                "content" -> { item(contentType = "settings-heading") { Text("Short dramas, K-dramas and movies", style = MaterialTheme.typography.titleMedium) }; item(contentType = "settings-description") { Text("Choose a source from Home or Browse to explore its catalog.", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                 "data" -> {
-                    item { Text("Temporary storage: ${Formatter.formatShortFileSize(context, model.temporaryBytes)}", Modifier.padding(vertical = 12.dp)) }
-                    item { SettingsRow(AppIcon.Info, "Export diagnostics", "Preview a report without titles, paths, or cookies") { diagnosticPreview = diagnostics(context) } }
-                    item { SettingsRow(AppIcon.Folder, "Storage and recovery", "Check free space and missing files") { model.inspectLibrary(); showRecovery = true } }
+                    item(contentType = "settings-description") { Text("Temporary storage: ${Formatter.formatShortFileSize(context, model.temporaryBytes)}", Modifier.padding(vertical = 12.dp)) }
+                    item(contentType = "settings-row") { SettingsRow(AppIcon.Info, "Export diagnostics", "Preview a report without titles, paths, or cookies") { diagnosticPreview = diagnostics(context) } }
+                    item(contentType = "settings-row") { SettingsRow(AppIcon.Folder, "Storage and recovery", "Check free space and missing files") { model.inspectLibrary(); showRecovery = true } }
                 }
-                "app" -> { item { SettingsRow(AppIcon.Info, "About", "Version and what’s new", onAbout) } }
+                "app" -> { item(contentType = "settings-row") { SettingsRow(AppIcon.Info, "About", "Version and what’s new", onAbout) } }
             }
-            model.settingsMessage?.let { message -> item { Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
+            model.settingsMessage?.let { message -> item(contentType = "settings-message") { Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
         }
     }
     choice?.let { selected ->
@@ -618,12 +618,12 @@ internal fun AboutScreen() {
     val info = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 108.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
+        item(contentType = "about-version") {
             Text(androidx.compose.ui.res.stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
             Text("Version ${info.versionName ?: "Unknown"} · Build ${info.longVersionCode}",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item {
+        item(contentType = "release-notes-heading") {
             Text(androidx.compose.ui.res.stringResource(R.string.ui_what_s_new), style = MaterialTheme.typography.titleLarge)
             Text("Version ${info.versionName ?: "Unknown"}", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary)
@@ -633,7 +633,7 @@ internal fun AboutScreen() {
             "Custom video links and series downloads.",
             "Clearer download statuses and a simpler downloads list.",
             "Anilili-inspired AMOLED styling and external playback."
-        )) { change ->
+        ), key = { it }, contentType = { "release-note" }) { change ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("•", color = MaterialTheme.colorScheme.primary)
                 Text(change, style = MaterialTheme.typography.bodyLarge)

@@ -56,7 +56,7 @@ internal fun DownloadReferenceSeriesCard(
                     onClickLabel = if (selectionActive) "Select ${series.title}" else "Remove every video of ${series.title}",
                     onClick = if (selectionActive) onSelect else onRemoveSeries),
                 contentAlignment = Alignment.Center) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color.Black.copy(alpha = .6f)), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(28.dp).offset(x = 6.dp, y = (-6).dp).clip(CircleShape).background(Color.Black.copy(alpha = .6f)), contentAlignment = Alignment.Center) {
                     CompositionLocalProvider(LocalContentColor provides Color.White) {
                         if (selectionActive && !selected) Canvas(Modifier.size(16.dp)) {
                             drawCircle(Color.White, style = Stroke(width = 2.dp.toPx()))

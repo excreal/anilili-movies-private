@@ -74,7 +74,7 @@ internal fun SiteDownloadScreen(
     var overviewExpanded by remember(model.series?.id) { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 108.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if ((!model.inspecting && model.series == null)) item {
+        if ((!model.inspecting && model.series == null)) item(contentType = "link-entry") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Open a video link", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(model.input, model::updateInput, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
@@ -88,21 +88,21 @@ internal fun SiteDownloadScreen(
                 }
             }
         }
-        if (model.inspecting) item { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { WaterFillLogoIndicator(size = 72.dp) } }
-        model.notice?.let { notice -> item {
+        if (model.inspecting) item(contentType = "loading") { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { WaterFillLogoIndicator(size = 72.dp) } }
+        model.notice?.let { notice -> item(contentType = "notice") {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(notice, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                 IconButton(onClick = model::dismissNotice) { AppSymbol(AppIcon.Close, description = "Dismiss notice") }
             }
         } }
-        model.error?.let { message -> item {
+        model.error?.let { message -> item(contentType = "error") {
             Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.padding(12.dp)) { Text(message); TextButton(onClick = model::dismissError) { Text("Dismiss") } }
             }
         } }
         model.series?.let { series ->
-            item { RemoteDetailHero(series, images) }
-            item {
+            item(contentType = "detail-hero") { RemoteDetailHero(series, images) }
+            item(contentType = "primary-actions") {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
                         enabled = model.ready && !model.preparing && !model.discarding && model.pending == null) {
@@ -113,7 +113,7 @@ internal fun SiteDownloadScreen(
                     }
                 }
             }
-            item {
+            item(contentType = "playback-summary") {
                 val summary = rememberSeriesPlaybackSummary(series)
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     summary.resumeLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -121,8 +121,8 @@ internal fun SiteDownloadScreen(
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            series.metadata?.let { metadata -> item { SiteMetadataHighlights(series.provider, metadata, onExploreMetadata) } }
-            if (!series.isSingleVideo) stickyHeader {
+            series.metadata?.let { metadata -> item(contentType = "metadata-highlights") { SiteMetadataHighlights(series.provider, metadata, onExploreMetadata) } }
+            if (!series.isSingleVideo) stickyHeader(contentType = "episode-tabs") {
                 Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
                     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(false to "Overview", true to "Episodes").filterNot { it.first && series.isSingleVideo }.forEach { (value, label) ->
@@ -156,13 +156,13 @@ internal fun SiteDownloadScreen(
                 }
 
             } else {
-                item {
+                item(contentType = "episode-heading") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${series.episodes.size} ${if (series.episodes.size == 1) "episode" else "episodes"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                         TextButton(onClick = { confirm = true }, enabled = model.ready && !model.preparing && model.pending == null) { Text("Download episodes") }
                     }
                 }
-                items(series.episodes, key = { it.id }) { episode ->
+                items(series.episodes, key = { it.id }, contentType = { "episode-row" }) { episode ->
                     val number = episode.displayNumber.filter(Char::isDigit)
                     val metadata = series.metadata?.episodes?.firstOrNull { it.number.filter(Char::isDigit) == number }
                     Surface(onClick = { onWatchEpisode?.invoke(episode.id) ?: onWatch() },
@@ -189,12 +189,12 @@ internal fun SiteDownloadScreen(
                     }
                 }
             }
-            if (model.pending != null) item { Text("Preparing downloads in the background. Manage them in Downloads.",
+            if (model.pending != null) item(contentType = "pending-download-message") { Text("Preparing downloads in the background. Manage them in Downloads.",
                 Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
         }
     }
     if (model.series != null) Row(
-        Modifier.fillMaxWidth().chromeFade(overHero = true).statusBarsPadding().height(64.dp).padding(horizontal = 4.dp),
+        Modifier.fillMaxWidth().chromeFade(overHero = true).statusBarsPadding().height(64.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) { AppSymbol(AppIcon.Back, description = "Back") }
@@ -220,6 +220,7 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
     val canvas = MaterialTheme.colorScheme.background
     val backdrop = series.metadata?.images?.firstOrNull { it.role in setOf("banner", "backdrop", "featured_artwork") }?.url ?: series.poster
     val poster = series.posterThumbnail()
+    val bannerArtwork = series.provider == SiteDownloadProvider.KISSKH
     Box(Modifier.fillMaxWidth().height(286.dp)) {
         AsyncImage(model = backdrop, imageLoader = images, contentDescription = null,
             modifier = Modifier.fillMaxWidth().height(190.dp), contentScale = ContentScale.Crop)
@@ -227,7 +228,7 @@ private fun RemoteDetailHero(series: SiteDownloadSeries, images: ImageLoader) {
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Bottom) {
             Thumbnail(poster, series.title, images,
-                Modifier.width(98.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
+                Modifier.width(98.dp).aspectRatio(if (bannerArtwork) 16f / 9f else 2f / 3f).clip(RoundedCornerShape(12.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)))
             Column(Modifier.weight(1f).padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.fillMaxWidth().heightIn(min = 60.dp), contentAlignment = Alignment.BottomStart) {
@@ -290,7 +291,7 @@ private fun MetadataTermChips(
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(unique, key = { it.url ?: it.id ?: it.name }) { term ->
+            items(unique, key = { it.url ?: it.id ?: it.name }, contentType = { "metadata-term" }) { term ->
                 val filterable = when (provider) {
                     SiteDownloadProvider.KISS18 -> kind in setOf("tag", "category", "genre")
                     SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.NARTO, SiteDownloadProvider.EROTICMV -> term.url != null
@@ -361,7 +362,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                             TextButton(onClick = { model.updateSelection("none") }) { Text("Clear") }
                         }
                     }
-                    items(series.episodes, key = { it.id }) { episode ->
+                    items(series.episodes, key = { it.id }, contentType = { "download-episode-choice" }) { episode ->
                         val checked = episode.id in selected
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp))
                             .background(if (checked) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else MaterialTheme.colorScheme.surfaceContainerLow)

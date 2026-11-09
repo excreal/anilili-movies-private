@@ -30,6 +30,10 @@ Reference: `/root/Anilili` source, plus the Android Developers accessibility and
 - The details page only shows More when the overview text overflows, and its control is an explicit button.
 - Download poster removal controls keep their compact appearance but have a 48 dp touch target. Browse source chips and detail tabs have larger touch areas.
 - Download title cards now prefer artwork saved with the series identity over episode-level thumbnails; EroticMV identities store the normal poster variant when metadata exposes it. Episode rows retain their episode artwork.
+- Browse search stays single-line with a concise KissKH label; source/filter controls are normalized to the compact visual size while retaining accessible touch targets.
+- Saved KissKH artwork keeps its landscape ratio in Details and Library, with saved cards constrained to the same width as other sources. Continue Watching actions use a themed bottom sheet, and its overflow/bookmark/delete icons sit nearer each card edge.
+- Home hero page count badge was removed; the page dots continue to show the current slide.
+- Saved short-drama files now open through an explicit progressive MP4 media source after checking that the document URI is readable and non-empty.
 - Home section layout controls use the same grid/list icons as Anilili. Browse source-shortcut visibility has a state-specific accessibility label.
 
 ## Verification still needed
@@ -37,5 +41,7 @@ Reference: `/root/Anilili` source, plus the Android Developers accessibility and
 - [x] `:app:compileDebugKotlin` succeeds.
 - [x] Narto playback parsing recognizes both the opaque signed HLS fixture and the Flash Sale episode's opaque MP4 source (`SiteDownloadSourcesTest`).
 - [x] Download group poster selection prefers the series poster for every source and falls back to episode artwork only when series artwork is unavailable (`DownloadGroupArtworkTest`).
+- [x] Release APK builds and its v2 signature verifies; local tests passed in the release build run.
 - [ ] Device visual and interaction pass. `adb devices -l` currently reports no connected device, so screenshots and live gesture checks are unavailable in this workspace.
+- [ ] Verify saved-file playback on device; no Android device or user-provided video file was available here.
 - [ ] Recheck the rendered layout on a narrow phone and a landscape device after installing the release APK.
