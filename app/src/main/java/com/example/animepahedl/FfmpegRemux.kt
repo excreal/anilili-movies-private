@@ -93,7 +93,17 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                     val start = bounds.first
                     val size = bounds.last - bounds.first + 1
                     require(size > 0 && OfflineDownloads.cache.isCached(key, start, size)) { "Requested cached byte range is incomplete" }
-                    val total = if (knownLength > 0) knownLength.toString() else "*"
+                    // If metadata omitted Content-Length, the contiguous cached extent from byte 0
+                    // can still provide the full resource length when the entire resource was
+                    // downloaded. Prefer that numeric total: FFmpeg rejects some 206 responses
+                    // with the RFC-valid but poorly supported Content-Range total of '*'.
+                    val inferredLength = OfflineDownloads.cache.getCachedLength(key, 0, Long.MAX_VALUE)
+                    val responseLength = knownLength.takeIf { it > 0 }
+                        ?: inferredLength.takeIf { it >= bounds.last + 1 }
+                    DebugTrace.event("cached_hls_range_served", "resource" to key.hashCode().toUInt().toString(),
+                        "offset" to start, "length" to size, "metadataLength" to knownLength,
+                        "inferredLength" to inferredLength, "responseLength" to responseLength)
+                    val total = responseLength?.toString() ?: "*"
                     val out = c.getOutputStream()
                     out.write(("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $start-${bounds.last}/$total\r\n" +
                         "Accept-Ranges: bytes\r\nContent-Length: $size\r\nConnection: close\r\n\r\n")
