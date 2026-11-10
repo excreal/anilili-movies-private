@@ -76,6 +76,33 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                 val prefix = "/$token/"
                 require(path.startsWith(prefix))
                 val uri = String(Base64.getUrlDecoder().decode(path.removePrefix(prefix)), Charsets.UTF_8)
+                // Media3 can cache every requested HLS byte range while leaving the resource's
+                // total length unknown (the provider responds to each request with a partial
+                // response and omits a usable total). Do not open the resource from byte zero to
+                // guess its length: a cache-only DataSource may report only one cached span, or
+                // -1, and FFmpeg then silently skips earlier TS resources. Serve explicit ranges
+                // directly from cache and use an unknown total when metadata has none.
+                val requestedRange = range
+                if (requestedRange != null) {
+                    val key = androidx.media3.datasource.cache.CacheKeyFactory.DEFAULT.buildCacheKey(
+                        DataSpec.Builder().setUri(uri.toUri()).build())
+                    val knownLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(
+                        OfflineDownloads.cache.getContentMetadata(key))
+                    val bounds = (if (knownLength > 0) parseByteRange(requestedRange, knownLength) else parseUnknownTotalRange(requestedRange))
+                        ?: throw IllegalArgumentException("Invalid byte range")
+                    val start = bounds.first
+                    val size = bounds.last - bounds.first + 1
+                    require(size > 0 && OfflineDownloads.cache.isCached(key, start, size)) { "Requested cached byte range is incomplete" }
+                    val total = if (knownLength > 0) knownLength.toString() else "*"
+                    val out = c.getOutputStream()
+                    out.write(("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $start-${bounds.last}/$total\r\n" +
+                        "Accept-Ranges: bytes\r\nContent-Length: $size\r\nConnection: close\r\n\r\n")
+                        .toByteArray(Charsets.ISO_8859_1))
+                    sent = true
+                    if (parts.first() != "HEAD") DataSourceInputStream(factory.createDataSource(),
+                        DataSpec.Builder().setUri(uri.toUri()).setPosition(start).setLength(size).build()).use { it.copyExactly(out, size) }
+                    return
+                }
                 val dataSource = factory.createDataSource()
                 try {
                     val length = dataSource.open(DataSpec.Builder().setUri((uri).toUri()).build())
@@ -126,7 +153,8 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                             .setPosition(start).setLength(size).build()).use { it.copyExactly(out, size) }
                     }
                 } finally { dataSource.close() }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                DebugTrace.event("cached_hls_request_failed", "error" to error.javaClass.simpleName)
                 if (!sent) runCatching { c.getOutputStream().write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }
             }
         }
@@ -137,6 +165,16 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
         workers.shutdownNow()
         acceptor.join(1000)
     }
+}
+
+/** Parse a closed byte range when cache metadata doesn't expose the resource's total length. */
+private fun parseUnknownTotalRange(header: String): LongRange {
+    val match = Regex("bytes=(\\d+)-(\\d+)").matchEntire(header)
+        ?: throw IllegalArgumentException("A closed byte range is required when the resource length is unknown")
+    val start = match.groupValues[1].toLongOrNull() ?: throw IllegalArgumentException("Invalid range start")
+    val end = match.groupValues[2].toLongOrNull() ?: throw IllegalArgumentException("Invalid range end")
+    require(start >= 0 && end >= start) { "Invalid byte range" }
+    return start..end
 }
 
 /** Clip impossible HLS byte ranges to the bytes the origin actually returned and cached. */
