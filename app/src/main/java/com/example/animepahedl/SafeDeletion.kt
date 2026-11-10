@@ -1,6 +1,7 @@
 package com.example.animepahedl
 
 import android.content.Context
+import android.content.ContentUris
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
@@ -8,6 +9,15 @@ import android.provider.OpenableColumns
 import android.os.Environment
 import java.io.File
 import java.io.IOException
+
+private val outputSubtitleExtensions = setOf("srt", "vtt", "ass", "ssa", "sub", "idx", "ttml", "smi")
+
+internal fun isOutputSubtitleSidecar(candidate: String, mediaFileName: String): Boolean {
+    val mediaStem = mediaFileName.substringBeforeLast('.', mediaFileName)
+    val candidateExtension = candidate.substringAfterLast('.', "").lowercase()
+    val candidateStem = candidate.substringBeforeLast('.', candidate)
+    return candidateExtension in outputSubtitleExtensions && candidateStem.equals(mediaStem, ignoreCase = true)
+}
 
 /** Unknown provider state is never treated as absence (especially after a revoked grant). */
 internal fun deleteOwnedMedia(context: Context, uri: Uri) {
@@ -23,9 +33,6 @@ internal fun deleteOwnedMedia(context: Context, uri: Uri) {
 /** Delete only same-basename subtitle sidecars and an empty per-show directory. */
 internal fun deleteOutputCompanions(context: Context, record: ExportRecord) {
     val location = record.outputLocation("mp4")
-    val stem = location.fileName.substringBeforeLast('.', location.fileName)
-    val subtitleNames = setOf("srt", "vtt", "ass", "ssa", "sub", "idx", "ttml", "smi")
-        .map { "$stem.$it" }.toSet()
     val tree = record.tree.takeIf(String::isNotBlank)?.let(Uri::parse)
     if (tree != null) {
         runCatching {
@@ -56,7 +63,7 @@ internal fun deleteOutputCompanions(context: Context, record: ExportRecord) {
                 var hasOtherFiles = false
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
-                    if (cursor.getString(1).lowercase() in subtitleNames) sidecars += DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    if (isOutputSubtitleSidecar(cursor.getString(1), location.fileName)) sidecars += DocumentsContract.buildDocumentUriUsingTree(tree, id)
                     else hasOtherFiles = true
                 }
                 sidecars.forEach { runCatching { DocumentsContract.deleteDocument(context.contentResolver, it) } }
@@ -68,11 +75,15 @@ internal fun deleteOutputCompanions(context: Context, record: ExportRecord) {
             .filter(String::isNotBlank).joinToString("/").trimEnd('/') + "/"
         runCatching {
             val files = MediaStore.Files.getContentUri("external")
-            subtitleNames.forEach { name ->
-                context.contentResolver.delete(files,
-                    "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=?",
-                    arrayOf(relativePath, name))
+            val sidecars = mutableListOf<Uri>()
+            context.contentResolver.query(files,
+                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME),
+                "${MediaStore.MediaColumns.RELATIVE_PATH}=?", arrayOf(relativePath), null)?.use { cursor ->
+                while (cursor.moveToNext()) if (isOutputSubtitleSidecar(cursor.getString(1), location.fileName)) {
+                    sidecars += ContentUris.withAppendedId(files, cursor.getLong(0))
+                }
             }
+            sidecars.forEach { context.contentResolver.delete(it, null, null) }
         }
         runCatching {
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).canonicalFile
