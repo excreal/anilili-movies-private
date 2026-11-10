@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -99,13 +100,15 @@ object OfflineDownloads {
             val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
             require(record.identity?.isSiteDownload == true) { "This download record is not supported by this edition." }
             val media = requireNotNull(record.media) { "Video source context is missing. Retry to resolve this episode again." }
-            if (media.isHls() && record.identity?.anime?.session?.startsWith("sites:KISSKH:") == true) {
-                return@DownloaderFactory KisskhHlsDownloader(app, request, media, SiteDownloadCookieStore(app)::headerFor)
-            }
             val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor)).setTransferListener(transferListener)
-                .setDefaultRequestProperties(mediaRequestHeaders(media))
+            // Resolve headers for every manifest, segment, and encryption-key URI. HLS resources
+            // commonly move across CDN hosts, so applying one static header map leaks or misses
+            // provider-specific headers after relative URLs and redirects are resolved.
+            val resolving = ResolvingDataSource.Factory(upstream) { dataSpec ->
+                dataSpec.withRequestHeaders(mediaRequestHeaders(media, dataSpec.uri.toString()))
+            }
             val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
-                .setUpstreamDataSourceFactory(upstream)
+                .setUpstreamDataSourceFactory(resolving)
             androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(request)
         }
         return DownloadManager(app, androidx.media3.exoplayer.offline.DefaultDownloadIndex(database), downloaderFactory).also {

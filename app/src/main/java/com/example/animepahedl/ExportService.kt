@@ -230,16 +230,10 @@ class ExportService : Service() {
             require(estimated <= 0 || available > estimated * if (record.tree.isBlank()) 2 else 1) { "Not enough space for assembly and final copy. Free storage and Retry save." }
             val direct = id.startsWith("direct:")
             val progressive = !direct && record.identity?.isSiteDownload == true && record.media?.isHls() == false
-            val kisskhHls = !direct && record.identity?.anime?.session?.startsWith("sites:KISSKH:") == true && record.media?.isHls() == true
-            if (direct || progressive || kisskhHls) {
+            if (direct || progressive) {
                 val source = when {
                     direct -> getSystemService(DownloadManager::class.java)
                         .getUriForDownloadedFile(id.removePrefix("direct:").toLong()) ?: error("Downloaded file is unavailable")
-                    kisskhHls -> {
-                        val staged = kisskhHlsOutputFile(this, id)
-                        require(staged.isFile && staged.length() > 0L) { "FFmpeg's verified HLS download is unavailable. Retry download." }
-                        Uri.fromFile(staged)
-                    }
                     else -> {
                         Exports.setProgress(id, ExportProgress("Preparing video", -1f))
                         withExportProgressDeadline(id) { withContext(Dispatchers.IO) {

@@ -1,17 +1,17 @@
 # Graph Report - AnililiMovies  (2026-11-10)
 
 ## Corpus Check
-- 309 files · ~278,294 words
+- 308 files · ~277,457 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 40 file(s) not represented in the graph (top: .xml 22, .properties 4, (none) 3)
 
 ## Summary
-- 4718 nodes · 11425 edges · 261 communities (166 shown, 95 thin omitted)
-- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 670 edges (avg confidence: 0.86)
+- 4711 nodes · 11382 edges · 239 communities (157 shown, 82 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 669 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `16b841b5`
+- Built from commit: `8e42e9af`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,10 +21,10 @@
 - AniListModels.kt
 - ExternalPlayer.kt
 - InPlayerEpisodeList.kt
-- TvTextField.kt
+- PlayerGestureControls.kt
 - PlayerSurface.kt
 - SettingsStore
-- TvPlayerControls.kt
+- PlayerControlsScaffold
 - NostrUpdateSource.kt
 - CaptionStyle
 - PlayerSurface
@@ -41,11 +41,11 @@
 - PlayerSettingsSheet.kt
 - .operation
 - .manager
-- PlayerScreenLock.kt
+- ErrorNotice.kt
 - PlaybackBuffer.kt
 - SettingsStore.kt
 - PlaybackService.kt
-- LibraryScreens.kt
+- LibraryNavigationTest
 - SearchScreenTest.kt
 - AppSymbol
 - KisskhResilienceTest.kt
@@ -62,7 +62,7 @@
 - SleepTimer.kt
 - SiteDownloadSeries
 - BoundedUrlTokenRegistry
-- FfmpegRemux.kt
+- .serve
 - DownloadStore
 - ExistingOutput.kt
 - PreferredAudioLanguage
@@ -75,7 +75,7 @@
 - TvFocusTarget.kt
 - AnimepaheDL codebase review
 - .verifyExport
-- c
+- SubtitleItem
 - Listener
 - LocalStreamProxy.kt
 - CastButton
@@ -88,7 +88,7 @@
 - MegaPlayCdnHealth.kt
 - EroticMvMetadataApi.kt
 - Anilili UI reference audit
-- SubtitleCueTimes.kt
+- DeletionTestProvider.java
 - PlaybackDiagnostics.kt
 - FocusFill.kt
 - MidnightHelper
@@ -96,62 +96,60 @@
 - AppDns
 - PreferredSubtitleLanguage
 - ErrorReporting.kt
-- PopupGlass.kt
+- OpenSubtitlesPanel.kt
 - AppColorScheme.kt
 - CatalogViewModel.kt
 - SiteMetadataApi
 - SiteDownloadEpisode
 - ErrorNotice.kt
 - AnimeRepository.kt
-- PlayerSettingsSheet.kt
+- instrumentationregistry
 - SubtitleSearchLanguage
 - SiteDownloadSources.kt
 - LibraryTools.kt
 - ResolvedMedia
-- instrumentationregistry
-- FlixcloudPlaylistDataSource.kt
+- ThreadTraceListener.java
+- SearchScreenTest.kt
 - LocalStreamProxy
 - LocalStreamProxyService.kt
 - RemoteDownloadSheet
-- SafeDeletion.kt
+- TvFocusTargetNode
 - .page
-- .editCaptionStyle
-- LibraryNavigationTest
-- .onPlayerError
+- CatalogViewModel.kt
+- TimeOfDay.kt
 - AnnouncementSource.kt
 - .switchPlaybackPlayer
-- KwikPlaylistDataSource.kt
+- FlixcloudPlaylistDataSource.kt
 - Test
 - metadataFromDocument
-- AdjustableLoadControl
+- GlassSection
 - ThemeAccent
 - Test
 - Listener
-- EpisodeControlPlayer
+- CaptionPosition
 - .check
-- OperationRecovery.kt
+- Callback
 - SourceOptions.kt
 - ErrorDomain
-- UniqueStreamKeyDataSource
-- Narto Drama public metadata API
-- MetadataHttp
+- NativeTvTextWatcher
+- decodeRelayFrame
+- WebSocketListener
 - AppGraph
 - Test
 - AnnouncementInputBoundsTest
 - SecureTokenStore
-- PlayerSeekMarkers.kt
+- Security and privacy findings
 - ThemePreset
 - LocalStreamProxyHeaderPolicyTest
 - ForwardingPlayer
-- AutoSkipCountdown.kt
+- SiteDownloadViewModel.kt
 - SkipTimingStatus
 - TvPlayerControl
-- KisskhHlsDownloader
 - CatalogScreen
 - downloadLocation
 - DownloadNotifications.kt
-- NetworkIdentity.kt
-- ThemeSettings.kt
+- UI and usability findings
+- RelatedLayout
 - .configureRequestHeaders
 - .onCreate
 - c
@@ -160,83 +158,63 @@
 - ReferencePlaybackRegistry
 - ForegroundCheck
 - LegacyTrustAnchors.kt
-- DefaultQuality
-- PlaybackBufferSize
+- KissKH metadata API
+- TvTextInputType
 - EpisodeDownloads
 - .write
 - MidnightSettingSwitchRow
 - PlayerSystemBars.kt
 - AnnouncementManager.kt
 - CatalogItem
-- PlatformErrorCodes.kt
+- AnimeRepository.kt
 - .row
 - Real-device verification
-- GlassSection
+- size
 - ErrorAction
 - HlsPlaylistRewrite.kt
 - NextEpisodeTrigger
 - CatalogPosterCard
-- HlsExportTest.kt
-- parseEroticMvMetadataPage
-- X509TrustManager
+- URI
+- MidnightNoticeTone
+- CategoryAudioDecision
 - Reliability and correctness findings
 - Browse, play and download
 - .init
 - TvPlayerBackTarget
-- MidnightChoicePicker
+- SavedFilesWatcher.kt
 - FailureReason
 - selectCachedHlsVariant
-- .isChallenge
+- cached
 - ProviderBenchmark
 - ClockFormat
 - DownloadQuality
 - PlayerAspectRatio
 - TransferListener
-- Callback
+- UI parity and usability checklist
 - CatalogHero
 - TransferState
 - isExportDurationComplete
 - OrderedWrites
 - SiteDownloadRepositoryTest.kt
 - Anilili feature audit checklist
-- MenuLanguage
-- ThemeStyle
-- DiagnosticsLog
+- .focusSearch
 - .transform
-- Theme.kt
-- Base64Compat
-- NativeTvTextWatcher
 - backdropBlur
 - ReferenceChromeTokens.kt
 - DownloadAction
-- SaveState
-- Security and privacy findings
 - Review implementation status
-- DiscordStatus
-- RelatedLayout
-- AppBackdropDim
-- ThemeBackground
-- ThemeContrast
-- ReferenceVideoPlayer.kt
+- PosterElement
+- UiState.kt
 - normalizeOutputFolder
-- UI and usability findings
 - X509TrustManager
 - .legacyIdentity
 - UiScale
-- PlaylistForeignSegments.kt
 - .event
 - DesignSystem.kt
-- EditionProviderBoundaryTest
 - Dramatip metadata API
-- TvTextInputType
-- Callback
-- findActivity
 - ExampleUnitTest.kt
-- build.sh
 - EroticMV metadata API
-- UI parity and usability checklist
-- CategoryAudioDecision
-- cached
+- TvEpisodeChangeFocus
 - Device UI verification
 - Developer announcements
 - AGENTS.md
@@ -244,11 +222,9 @@
 - docs/KISSKH.md
 - THIRD_PARTY_NOTICES.md
 - make-export-benchmark.sh
-- EroticMvMetadataApi
-- ExportedSubtitle
-- .focusSearch
-- CompiledSeparately
-- subtitleReprepareState
+- verificationPage
+- ExampleInstrumentedTest.kt
+- GestureDragAxis
 
 ## God Nodes (most connected - your core abstractions)
 1. `SettingsStore` - 157 edges
@@ -267,81 +243,81 @@
   docs/api/NARTO.md → app/src/main/java/com/example/animepahedl/metadata/SiteMetadataApi.kt
 - `Download playback-state correction (current source)` --references--> `WatchProgressBar()`  [INFERRED]
   docs/UI_REFERENCE_CHECKLIST.md → app/src/main/java/com/anilili/ui/components/Common.kt
-- `Verification plan` --references--> `DownloadSelectionTest`  [INFERRED]
-  docs/ui-consistency-and-wrapping-audit.md → app/src/androidTest/java/com/example/animepahedl/DownloadSelectionTest.kt
-- `Verification plan` --references--> `LibraryNavigationTest`  [INFERRED]
-  docs/ui-consistency-and-wrapping-audit.md → app/src/androidTest/java/com/example/animepahedl/LibraryNavigationTest.kt
 - `Browse and filtering` --references--> `MetadataHttp`  [INFERRED]
   docs/api/KISS18.md → app/src/main/java/com/example/animepahedl/metadata/SiteMetadataApi.kt
+- `Verification still needed` --references--> `DownloadGroupArtworkTest`  [INFERRED]
+  UI_PARITY_CHECKLIST.md → app/src/test/java/com/example/animepahedl/DownloadGroupArtworkTest.kt
+- `Necessary host adaptations` --references--> `PlaybackService`  [INFERRED]
+  docs/REFERENCE_PLAYER_PORT.md → app/src/main/java/com/anilili/playback/PlaybackService.kt
 
 ## Import Cycles
 - None detected.
 
-## Communities (261 total, 95 thin omitted)
+## Communities (239 total, 82 thin omitted)
 
 ### Community 0 - "AnililiError"
 Cohesion: 0.02
 Nodes (98): AnililiError, ACCOUNT_LIBRARY_LOAD_FAILED, ACCOUNT_LIST_ENTRY_DELETE_FAILED, ACCOUNT_LIST_UPDATE_FAILED, ACCOUNT_LOGIN_ABANDONED, ACCOUNT_LOGIN_PAGE_FAILED, ACCOUNT_PROFILE_LOAD_FAILED, ACCOUNT_PROGRESS_UPDATE_FAILED (+90 more)
 
 ### Community 1 - "LibraryScreens.kt"
-Cohesion: 0.07
-Nodes (10): EpisodeArtwork(), playerClockAnchor(), PlayerClockReadout(), playerClockText(), rememberClockMinute(), PlayerPauseOverlay(), sleepTimerWarningAnchor(), ReferenceSettingsIndex() (+2 more)
+Cohesion: 0.08
+Nodes (6): ReferenceSettingsIndex(), SettingsSectionCard(), SettingsSectionTile, onPause(), onResume(), openFromIntent()
 
 ### Community 2 - "AniListModels.kt"
 Cohesion: 0.06
 Nodes (78): AiringCountEntry, AiringCountMedia, AiringCountPage, AiringDayCount, AiringSchedule, AnimeStat, AppNotification, CoverImage (+70 more)
 
 ### Community 3 - "ExternalPlayer.kt"
-Cohesion: 0.07
-Nodes (20): LibraryStore, ExternalPlaybackOutcome, externalPlaybackOutcome(), ExternalPlaybackReturns, ExternalPlaybackSession, ExternalPlaybackRequest, externalPlaybackRequest(), externalPlayerHeaderPairs() (+12 more)
+Cohesion: 0.09
+Nodes (19): LibraryStore, ExternalPlaybackOutcome, externalPlaybackOutcome(), ExternalPlaybackReturns, ExternalPlaybackSession, ExternalPlaybackRequest, externalPlaybackRequest(), externalPlayerHeaderPairs() (+11 more)
 
 ### Community 4 - "InPlayerEpisodeList.kt"
-Cohesion: 0.06
-Nodes (39): EpisodeItem, EpisodeLayout, GRID, LIST, EpisodeOrder, NEWEST_FIRST, OLDEST_FIRST, rememberFocusFill() (+31 more)
+Cohesion: 0.05
+Nodes (42): EpisodeItem, EpisodeLayout, GRID, LIST, EpisodeOrder, NEWEST_FIRST, OLDEST_FIRST, focusFill() (+34 more)
 
-### Community 5 - "TvTextField.kt"
-Cohesion: 0.08
-Nodes (5): SeriesLogo(), rememberSystemUses24Hour(), ContentObserver, PlayerSeriesName(), rememberTimedSkipPopup()
+### Community 5 - "PlayerGestureControls.kt"
+Cohesion: 0.04
+Nodes (7): BubbleSpec, volumeIcon(), PlayerLockButton(), PlayerLockOverlay(), playerTypography(), rememberTimedSkipPopup(), BubbleSpec
 
 ### Community 6 - "PlayerSurface.kt"
-Cohesion: 0.05
-Nodes (26): adaptiveVideoHeightCeiling(), applyAudioTrack(), applyCaptionEdgeInset(), applyCaptionStyle(), applyCategoryAudioPreference(), applyContentAspectRatio(), applyTextTrack(), applyVideoHeight() (+18 more)
+Cohesion: 0.04
+Nodes (31): playbackFailureEntry(), httpFailureSummary(), shouldRetryDecoderAtLowerVideoResolution(), adaptiveVideoHeightCeiling(), applyAudioTrack(), applyCategoryAudioPreference(), applyPreferredAudioLanguage(), applyPreferredSubtitleLanguage() (+23 more)
 
-### Community 8 - "TvPlayerControls.kt"
+### Community 8 - "PlayerControlsScaffold"
 Cohesion: 0.06
-Nodes (29): bufferedFraction(), BufferedSeekTrack(), controlsSeekAnchorFor(), formatPlayerTime(), PlayerActionPill(), PlayerActionRow(), playerActionRowScale(), PlayerBackArrow() (+21 more)
+Nodes (36): bufferedFraction(), BufferedSeekTrack(), controlsSeekAnchorFor(), PlayerActionPill(), PlayerActionRow(), playerActionRowScale(), PlayerBackArrow(), PlayerChromeBox() (+28 more)
 
 ### Community 9 - "NostrUpdateSource.kt"
-Cohesion: 0.13
-Nodes (12): decodeRelayFrame(), EndOfStoredEvents, Event, hexToBytes(), NostrEvent, NostrUpdateSource, RelayFrame, RelayFrameDecision (+4 more)
+Cohesion: 0.16
+Nodes (7): hexToBytes(), NostrEvent, NostrUpdateSource, RelayFrameGate, RelayScanResult, toHexString(), toNostrEvent()
 
 ### Community 10 - "CaptionStyle"
-Cohesion: 0.06
-Nodes (23): CaptionBackgroundColor, BLACK, GRAY, NAVY, WHITE, CaptionEdgeStyle, DROP_SHADOW, NONE (+15 more)
+Cohesion: 0.05
+Nodes (31): CaptionBackgroundColor, BLACK, GRAY, NAVY, WHITE, CaptionEdgeStyle, DROP_SHADOW, NONE (+23 more)
 
 ### Community 11 - "PlayerSurface"
-Cohesion: 0.05
-Nodes (41): PlayerContentScale, CROP, FILL, FIT, rememberScreenReaderActive(), Routes, shouldShowManualSkipButton(), outroSkipTargetMs() (+33 more)
+Cohesion: 0.04
+Nodes (39): PlayerContentScale, CROP, FILL, FIT, rememberScreenReaderActive(), CompiledSeparately(), Routes, AutoSkipCountdown (+31 more)
 
 ### Community 12 - "MidnightDialog.kt"
 Cohesion: 0.05
-Nodes (8): EqualizerWaveIndicator(), midnightFocus(), MidnightSettingSpotlight, Midnight, PlayerAccentScope(), playedFraction(), PlayerSeekBar(), seekTargetMs()
+Nodes (4): EqualizerWaveIndicator(), MidnightSettingSpotlight, PlayerAccentScope(), PageSearchField()
 
 ### Community 13 - "PlayerGestureControls.kt"
-Cohesion: 0.06
-Nodes (38): applyBrightness(), applyVolume(), Brightness, canSlideSeek(), canStartHoldSpeed(), GestureDragAxis, Horizontal, Vertical (+30 more)
+Cohesion: 0.07
+Nodes (35): formatPlayerTime(), applyBrightness(), applyVolume(), Brightness, canSlideSeek(), canStartHoldSpeed(), GestureIndicatorSide, gestureIndicatorSide() (+27 more)
 
 ### Community 14 - "AppBackdrop.kt"
-Cohesion: 0.11
-Nodes (10): AppBackdrop, appCanvas(), appCanvasFade(), canvasColor(), centreCrop(), drawAppCanvas(), drawBackdropSlice(), hasAppBackdrop() (+2 more)
+Cohesion: 0.06
+Nodes (17): AppUiScale(), UnscaledUi(), SeriesLogo(), blurLine(), boxBlur(), PopupBackdrop, popupGlass(), AppBackdrop (+9 more)
 
 ### Community 15 - "TvNativeTextField"
-Cohesion: 0.23
+Cohesion: 0.20
 Nodes (5): beginNativeTvEditing(), hideNativeTvKeyboard(), isImeVisible(), SafeTvEditText, TvNativeTextField()
 
 ### Community 16 - ".all"
 Cohesion: 0.12
-Nodes (9): DeletionRecoveryTest, AndroidDownloadRepository, DownloadIdentity, adoptExistingVideo(), clearPendingVideo(), reconcileExistingVideos(), ExportRecord, Exports (+1 more)
+Nodes (8): DeletionRecoveryTest, consumeCancellable(), AndroidDownloadRepository, adoptExistingVideo(), clearPendingVideo(), reconcileExistingVideos(), Exports, R2 — Cold-start direct completion can be missed (P1, high confidence)
 
 ### Community 17 - "AppDeviceProfile.kt"
 Cohesion: 0.07
@@ -356,76 +332,76 @@ Cohesion: 0.06
 Nodes (7): CastRoute, CastRoutes, GoogleCastRoute, SessionAvailabilityListener, mediaClientOrNull(), shouldGiveUpOnCastLoad(), MiruroCastMediaItemConverter
 
 ### Community 20 - "ui/components/AnililiSilhouette.kt"
-Cohesion: 0.07
-Nodes (21): silhouetteFrame(), silhouetteMask(), BubbleSpec, cappedFrameSteps(), DetailedWaterFillLogo(), liquidLevel(), LoopHandover, PlainWaterFillLogo() (+13 more)
+Cohesion: 0.08
+Nodes (19): silhouetteFrame(), silhouetteMask(), cappedFrameSteps(), DetailedWaterFillLogo(), liquidLevel(), LoopHandover, PlainWaterFillLogo(), rememberLiquidClock() (+11 more)
 
 ### Community 21 - "SiteDownloadSources.kt"
-Cohesion: 0.14
-Nodes (21): Page, SiteDownloadRepository, chooseMediaVariant(), cleanProviderTitle(), decodeEroticMedia(), hostMatchesDomain(), isHlsMedia(), isSupportedVideoFile() (+13 more)
+Cohesion: 0.15
+Nodes (18): Page, SiteDownloadRepository, cleanProviderTitle(), decodeEroticMedia(), hostMatchesDomain(), isHlsMedia(), isSupportedVideoFile(), parseProviderTitleAndPoster() (+10 more)
 
 ### Community 22 - "PlayerSettingsSheet.kt"
-Cohesion: 0.17
-Nodes (22): MediaVolumeSlider(), PlayerPanelTheme(), CaptionSections(), formatSubtitleDelay(), midnightSliderColors(), PanelHeader(), PlayerAdjustButton(), PlayerAdjustRow() (+14 more)
+Cohesion: 0.10
+Nodes (23): MediaVolumeSlider(), PlayerPanelTheme(), CaptionSections(), formatSubtitleDelay(), midnightSliderColors(), PanelHeader(), PlayerAdjustButton(), PlayerAdjustRow() (+15 more)
 
 ### Community 23 - ".operation"
-Cohesion: 0.18
+Cohesion: 0.19
 Nodes (3): reconcileDirectEnqueues(), PreparationJobs, PreparationWorker
 
 ### Community 24 - ".manager"
-Cohesion: 0.11
+Cohesion: 0.10
 Nodes (5): DownloadRetryService, MediaVerification, OfflineDownloads, Listener, OfflineDownloadService
 
-### Community 25 - "PlayerScreenLock.kt"
-Cohesion: 0.08
-Nodes (9): NextEpisodeAction(), NextEpisodeCard(), defaultOpenSubtitlesLanguages(), openSubtitlesEpisodeField(), OpenSubtitlesPanel(), SubtitleResultRow(), PlayerLockButton(), PlayerLockOverlay() (+1 more)
+### Community 25 - "ErrorNotice.kt"
+Cohesion: 0.07
+Nodes (9): Midnight, NextEpisodeAction(), NextEpisodeCard(), playerClockAnchor(), PlayerClockReadout(), playerClockText(), rememberClockMinute(), PlayerPauseOverlay() (+1 more)
 
 ### Community 26 - "PlaybackBuffer.kt"
-Cohesion: 0.21
-Nodes (4): playbackBufferBytes(), PlaybackBufferPolicy, playbackBufferPolicy(), progressiveConstrainedPolicy()
+Cohesion: 0.08
+Nodes (15): PlaybackBufferSize, AUTOMATIC, LARGE, MEDIUM, SMALL, VERY_LARGE, causeChain(), platformErrorCode() (+7 more)
 
 ### Community 27 - "SettingsStore.kt"
-Cohesion: 0.06
-Nodes (19): coercePlaybackSpeed(), coercePlayerBrightness(), decodeHiddenPosterElements(), decodePersistentCaptionDelays(), decodeSourceFilterLanguages(), DownloadDestination, APP_ONLY, BOTH (+11 more)
+Cohesion: 0.04
+Nodes (24): coercePlaybackSpeed(), coercePlayerBrightness(), decodeHiddenPosterElements(), decodePersistentCaptionDelays(), decodeSourceFilterLanguages(), DefaultQuality, AUTO, HIGHEST (+16 more)
 
 ### Community 28 - "PlaybackService.kt"
-Cohesion: 0.07
+Cohesion: 0.08
 Nodes (3): CastRouteStatus, PlaybackCacheBypassGate, PlaybackService
 
-### Community 29 - "LibraryScreens.kt"
-Cohesion: 0.06
-Nodes (3): onPause(), onResume(), openFromIntent()
+### Community 29 - "LibraryNavigationTest"
+Cohesion: 0.15
+Nodes (6): DownloadSelectionTest, LibraryNavigationTest, AppSettings, Verification plan, Device verification, FFmpeg
 
 ### Community 30 - "SearchScreenTest.kt"
-Cohesion: 0.06
-Nodes (27): SearchScreenTest, 10. Collection summary gives count text precedence over its heading — P2, layout risk, 11. Text-heavy dialogs lack explicit scrolling — P2, layout risk, 12. Image-error copy does not adapt to thumbnail size — P3, layout risk, 13. Verification banner's View action can leave the user on Settings/About — P2, confirmed, 14. Search, empty states, and error treatments vary without shared components — P2, confirmed design divergence, 15. Completion and destructive-action terminology is inconsistent — P2, confirmed, 16. Spacing, chevrons, and text hierarchy are locally defined — P3, confirmed design divergence (+19 more)
+Cohesion: 0.08
+Nodes (25): 10. Collection summary gives count text precedence over its heading — P2, layout risk, 11. Text-heavy dialogs lack explicit scrolling — P2, layout risk, 12. Image-error copy does not adapt to thumbnail size — P3, layout risk, 13. Verification banner's View action can leave the user on Settings/About — P2, confirmed, 14. Search, empty states, and error treatments vary without shared components — P2, confirmed design divergence, 15. Completion and destructive-action terminology is inconsistent — P2, confirmed, 16. Spacing, chevrons, and text hierarchy are locally defined — P3, confirmed design divergence, 1. Explore search actions consume the input's usable width — P1, layout risk (+17 more)
 
 ### Community 31 - "AppSymbol"
-Cohesion: 0.09
-Nodes (20): AppSymbol(), DestinationSummary(), DownloadReferenceEpisode, DownloadReferenceEpisodeRow(), DownloadReferenceSeries, DownloadReferenceSeriesCard(), ReferenceCornerBadge(), WatchProgressBar() (+12 more)
+Cohesion: 0.10
+Nodes (18): AppSymbol(), DestinationSummary(), DownloadReferenceEpisode, DownloadReferenceEpisodeRow(), DownloadReferenceSeries, DownloadReferenceSeriesCard(), ReferenceCornerBadge(), WatchProgressBar() (+10 more)
 
 ### Community 32 - "KisskhResilienceTest.kt"
-Cohesion: 0.09
-Nodes (3): artworkRecoveryHostPolicy(), isAllowedArtworkRecoveryUrl(), ArtworkRecoveryPolicyTest
+Cohesion: 0.10
+Nodes (4): artworkRecoveryHostPolicy(), isAllowedArtworkRecoveryUrl(), ArtworkRecoveryPolicyTest, X509TrustManager
 
 ### Community 33 - "AppDeviceProfile.kt"
-Cohesion: 0.09
-Nodes (8): focusHalo(), focusHighlight(), phoneRailPosterWidth(), AppUiScale(), UnscaledUi(), PlayerLayoutMetrics, playerLayoutMetrics(), PlayerWidthTier
+Cohesion: 0.18
+Nodes (3): focusHalo(), focusHighlight(), phoneRailPosterWidth()
 
 ### Community 34 - "KisskhCatalog.kt"
-Cohesion: 0.12
-Nodes (16): detail(), json(), JsonResult, list(), localizeSubtitles(), playbackSubtitles(), Redirect, series() (+8 more)
+Cohesion: 0.31
+Nodes (11): detail(), json(), JsonResult, list(), localizeSubtitles(), playbackSubtitles(), Redirect, series() (+3 more)
 
 ### Community 35 - "SubtitleTrackMerge.kt"
-Cohesion: 0.12
-Nodes (34): assDialogueLine(), AssDocument, assPlayRes(), assRecord(), assStyleLine(), assTime(), buildSignsMerge(), decodeEntities() (+26 more)
+Cohesion: 0.14
+Nodes (30): assDialogueLine(), AssDocument, assPlayRes(), assRecord(), assStyleLine(), assTime(), decodeEntities(), formatFields() (+22 more)
 
 ### Community 36 - "Composable"
-Cohesion: 0.16
-Nodes (21): CoverScreenWithDialogWindow(), MidnightBodyTopStop(), MidnightConfirmDialog(), MidnightConnectionStatus(), MidnightDialogFooter(), MidnightDialogFrame(), MidnightDialogHost(), MidnightFilledAction() (+13 more)
+Cohesion: 0.14
+Nodes (24): CoverScreenWithDialogWindow(), MidnightBodyTopStop(), MidnightConfirmDialog(), MidnightConnectionStatus(), MidnightDialogFooter(), MidnightDialogFrame(), MidnightDialogHost(), MidnightFilledAction() (+16 more)
 
 ### Community 37 - "DownloaderViewModel.kt"
-Cohesion: 0.06
-Nodes (8): OpenSubtitlesAuthManager, OpenSubtitlesCredentials, loadBookmarks(), toggleBookmark(), details(), Index, kObjects(), kString()
+Cohesion: 0.05
+Nodes (7): AnimeApplication, copyCancellable(), normalizeCachedByteRanges(), details(), Index, kObjects(), kString()
 
 ### Community 38 - "developer_notices.py"
 Cohesion: 0.08
@@ -436,20 +412,20 @@ Cohesion: 0.13
 Nodes (25): capResumePoints(), DismissedRemoteRow, episodeKey(), EpisodeResume, EpisodeStop, historyAfterEpisodeToggled(), historyAfterEpisodeWatched(), historyAfterRemoteProgress() (+17 more)
 
 ### Community 40 - "SubtitleCueLayout.kt"
-Cohesion: 0.14
-Nodes (18): CaptionPosition, BOTTOM, TOP, autoStackedRow(), box(), CueBox, CueLayoutTextOutput, dedupeSimultaneousCues() (+10 more)
+Cohesion: 0.17
+Nodes (15): autoStackedRow(), box(), CueBox, CueLayoutTextOutput, dedupeSimultaneousCues(), dropVectorDrawings(), flattenAutoStackedCues(), isAutoStack() (+7 more)
 
 ### Community 41 - "SourceFilterLanguage"
 Cohesion: 0.06
 Nodes (29): encodeSourceFilterLanguages(), SourceFilterLanguage, ARABIC, BENGALI, CHINESE, DUTCH, ENGLISH, FRENCH (+21 more)
 
 ### Community 42 - "ExternalSubtitleFiles.kt"
-Cohesion: 0.21
-Nodes (16): SubtitleItem, AttachedSubtitle, bomCharset(), decodeSubtitleBytes(), displayName(), downloadOpenSubtitle(), exportedSubtitleMimeType(), extensionFor() (+8 more)
+Cohesion: 0.18
+Nodes (15): ExportedSubtitle, AttachedSubtitle, bomCharset(), decodeSubtitleBytes(), displayName(), downloadOpenSubtitle(), exportedSubtitleMimeType(), extensionFor() (+7 more)
 
 ### Community 43 - "SleepTimer.kt"
-Cohesion: 0.12
-Nodes (11): Counting, EndOfEpisode, formatSleepRemaining(), Off, sleepFadeLevel(), SleepTimer, State, rememberSleepRemaining() (+3 more)
+Cohesion: 0.07
+Nodes (13): NetworkIdentity, Counting, EndOfEpisode, formatSleepRemaining(), Off, sleepFadeLevel(), SleepTimer, State (+5 more)
 
 ### Community 44 - "SiteDownloadSeries"
 Cohesion: 0.09
@@ -459,9 +435,9 @@ Nodes (8): OnlineDramaHistoryTest, ContinueWatchingRow(), LibraryScreen(), Playb
 Cohesion: 0.13
 Nodes (5): BoundedUrlTokenRegistry, ProxyActiveResources, stopProxyResources(), TrackedProxyResources, UrlRegistryCapacityException
 
-### Community 46 - "FfmpegRemux.kt"
-Cohesion: 0.07
-Nodes (9): CacheServerTest, copyCancellable(), consumeCancellable(), CachedHlsServer, InputStream, copyExactly(), normalizeCachedByteRanges(), parseUnknownTotalRange() (+1 more)
+### Community 46 - ".serve"
+Cohesion: 0.27
+Nodes (4): InputStream, copyExactly(), parseUnknownTotalRange(), readBytesBounded()
 
 ### Community 47 - "DownloadStore"
 Cohesion: 0.14
@@ -479,85 +455,81 @@ Nodes (18): PreferredAudioLanguage, ARABIC, AUTOMATIC, BENGALI, CHINESE, ENGLISH
 Cohesion: 0.15
 Nodes (7): NativeHeaderContext, normalizeSiteDownloadCookieFile(), siteDownloadCookieHeader(), validCookiePair(), validSiteDownloadCookieInput(), NativeRequestHeaderPolicyTest, SiteDownloadCookieTest
 
-### Community 51 - "SessionBrowser.kt"
-Cohesion: 0.18
-Nodes (3): DebugTrace, SessionBrowser(), WebViewClient
-
 ### Community 52 - "SiteMetadataApi.kt"
-Cohesion: 0.29
-Nodes (17): browse(), MetadataBrowseQuery, MetadataDetails, MetadataEpisode, metadataEpisode(), MetadataImage, MetadataPage, MetadataPayload (+9 more)
+Cohesion: 0.24
+Nodes (21): browse(), metadataFromDocument(), metadataFromHtml(), MetadataBrowseQuery, MetadataDetails, MetadataEpisode, metadataEpisode(), MetadataImage (+13 more)
 
 ### Community 53 - "ExportService.kt"
-Cohesion: 0.07
-Nodes (12): ExistingOutputTest, IntegrityTest, AnnouncementDialog(), downloadsPendingIntent(), DownloadCompleteReceiver, ExportProgress, onBind(), onCreate() (+4 more)
+Cohesion: 0.09
+Nodes (9): ExistingOutputTest, IntegrityTest, AnnouncementDialog(), downloadsPendingIntent(), DownloadCompleteReceiver, ExportProgress, onBind(), onCreate() (+1 more)
 
 ### Community 54 - "Category"
-Cohesion: 0.09
-Nodes (18): Category, DUB, SUB, EpisodesResult, hasUsableWindow(), playsInWebView(), ProviderData, SourcesResult (+10 more)
+Cohesion: 0.10
+Nodes (17): Category, DUB, SUB, EpisodesResult, hasUsableWindow(), ProviderData, SkipTimes, SourcesResult (+9 more)
 
 ### Community 55 - "AudioOutputFormat.kt"
-Cohesion: 0.14
+Cohesion: 0.13
 Nodes (7): AudioOutputFormat, AudioOutputMonitor, AudioRoute, audioRoute(), DECODED, PASSTHROUGH, Listener
 
 ### Community 56 - "TvFocusTarget.kt"
-Cohesion: 0.17
-Nodes (3): TvFocusTarget, TvFocusTargetElement, TvFocusTargetNode
+Cohesion: 0.23
+Nodes (5): rememberTvFocusTarget(), tvFocusHandoff(), TvFocusTarget, tvFocusTarget(), TvFocusTargetElement
 
 ### Community 57 - "AnimepaheDL codebase review"
 Cohesion: 0.17
 Nodes (12): AnimepaheDL codebase review, Architecture and strengths, P1 — Full-library reconstruction on frequent progress events (P2), P2 — Details availability repeatedly copies/scans records (P2), P3 — Batch source selection scales poorly (P2), P4 — Parallel exporter implementations obscure production behavior (P3), P5 — Persistence schema and orchestration are difficult to evolve (P3), Performance and maintainability (+4 more)
 
 ### Community 58 - ".verifyExport"
-Cohesion: 0.16
-Nodes (5): HlsExportTest, TimerTask, TimerTask, ffmpegRemuxCachedHls(), requireCachedHlsSegments()
+Cohesion: 0.11
+Nodes (7): CacheServerTest, HlsExportTest, TimerTask, TimerTask, CachedHlsServer, ffmpegRemuxCachedHls(), requireCachedHlsSegments()
 
-### Community 59 - "c"
-Cohesion: 0.40
-Nodes (3): iso3Language(), selectedTextLanguage(), syncableSubtitle()
+### Community 59 - "SubtitleItem"
+Cohesion: 0.15
+Nodes (19): SubtitleItem, loadSubtitleCueTimes(), loadSubtitleText(), nearestSubtitleCues(), parseArrowCueTimes(), parseAssCueTimes(), parseSubtitleCueTimes(), parseTimestampMs() (+11 more)
 
 ### Community 60 - "Listener"
 Cohesion: 0.14
 Nodes (5): contentAspectRatio(), diagnosticSummary(), Listener, preferredAudioTrackCodes(), stateName()
 
 ### Community 61 - "LocalStreamProxy.kt"
-Cohesion: 0.13
-Nodes (11): BodyHead, dispatchAcceptedSocket(), namedDaemonThreadFactory(), newBoundedProxyRequestExecutor(), ProxyRequest, readBody(), readHead(), readLine() (+3 more)
+Cohesion: 0.14
+Nodes (10): BodyHead, dispatchAcceptedSocket(), namedDaemonThreadFactory(), newBoundedProxyRequestExecutor(), ProxyRequest, readBody(), readHead(), readLine() (+2 more)
 
 ### Community 62 - "CastButton"
-Cohesion: 0.14
-Nodes (6): applyCastTextTrack(), CastButton(), openSystemCastPicker(), ThemedMediaRouteChooserDialogFragment, ThemedMediaRouteControllerDialogFragment, ThemedMediaRouteDialogFactory
+Cohesion: 0.11
+Nodes (7): applyCastTextTrack(), CastButton(), Callback, openSystemCastPicker(), ThemedMediaRouteChooserDialogFragment, ThemedMediaRouteControllerDialogFragment, ThemedMediaRouteDialogFactory
+
+### Community 63 - "KisskhResilienceTest"
+Cohesion: 0.10
+Nodes (6): fetchProviderSubtitleBytes(), MediaSubtitle, normalizeKisskhSubtitles(), providerSubtitleRequest(), ProviderSubtitles, KisskhResilienceTest
 
 ### Community 65 - "SubtitleDelay.kt"
-Cohesion: 0.14
+Cohesion: 0.15
 Nodes (5): SubtitleDelay, SubtitleDelayRenderer, SubtitleDelayRenderersFactory, SubtitleDelaySeed, subtitleDelaySeed()
 
 ### Community 66 - "AnimepaheDL resume state"
-Cohesion: 0.09
+Cohesion: 0.08
 Nodes (23): ADB device test + bookmark feature, AnimepaheDL resume state, Changes in the latest task, Current follow-up release, Custom downloader only, Dedicated details and download-range dialog, Environment and hosting, Existing work and reference (+15 more)
 
 ### Community 67 - "FloatingNavigationBar.kt"
-Cohesion: 0.12
-Nodes (9): chromeFade(), DownloaderNavigation(), barBlur(), barGlass(), barRim(), FloatingNavDisc(), FloatingNavIcon(), FloatingNavigationBar() (+1 more)
+Cohesion: 0.11
+Nodes (9): captionOffset(), DownloaderNavigation(), barBlur(), barGlass(), barRim(), FloatingNavDisc(), FloatingNavIcon(), FloatingNavigationBar() (+1 more)
 
 ### Community 69 - "MegaPlayCdnHealth.kt"
 Cohesion: 0.18
 Nodes (6): healthHost(), isMegaPlayMedia(), MegaPlayCdnHealth, Callback, MegaPlayCdnHealthInterceptor, MegaPlayHealthState
 
 ### Community 70 - "EroticMvMetadataApi.kt"
-Cohesion: 0.25
-Nodes (18): absoluteErotic(), cleanEroticDescription(), eroticCard(), eroticDurationSeconds(), eroticImages(), eroticImdb(), eroticRatings(), eroticSiteUrl() (+10 more)
+Cohesion: 0.18
+Nodes (19): absoluteErotic(), cleanEroticDescription(), eroticCard(), eroticDurationSeconds(), eroticImages(), eroticImdb(), eroticRatings(), eroticSiteUrl() (+11 more)
 
 ### Community 71 - "Anilili UI reference audit"
-Cohesion: 0.12
-Nodes (16): Anilili UI reference audit, Automated source comparison, Build/package verification, Complete active shared-component inventory, Download playback-state correction (current source), Downloads, details and settings, Explicit backend adaptations, Home and Browse (+8 more)
-
-### Community 72 - "SubtitleCueTimes.kt"
-Cohesion: 0.39
-Nodes (10): loadSubtitleCueTimes(), loadSubtitleText(), nearestSubtitleCues(), parseArrowCueTimes(), parseAssCueTimes(), parseSubtitleCueTimes(), parseTimestampMs(), stripMarkup() (+2 more)
+Cohesion: 0.09
+Nodes (20): File inventory, Original Anilili player port, Player-port release verification (2026-11-08), Review checklist, Anilili UI reference audit, Automated source comparison, Build/package verification, Complete active shared-component inventory (+12 more)
 
 ### Community 75 - "MidnightHelper"
-Cohesion: 0.23
-Nodes (12): MidnightChoiceRow(), MidnightHelper(), midnightInitialFocus(), MidnightRowScaffold(), MidnightSectionLabel(), midnightSelectable(), MidnightSelectionRow(), MidnightStatusRow() (+4 more)
+Cohesion: 0.20
+Nodes (13): MidnightChoiceRow(), midnightFocus(), MidnightHelper(), midnightInitialFocus(), MidnightRowScaffold(), MidnightSectionLabel(), midnightSelectable(), MidnightSelectionRow() (+5 more)
 
 ### Community 76 - "AppIcon"
 Cohesion: 0.10
@@ -572,32 +544,40 @@ Cohesion: 0.10
 Nodes (17): PreferredSubtitleLanguage, ARABIC, AUTOMATIC, CHINESE, ENGLISH, FRENCH, GERMAN, HINDI (+9 more)
 
 ### Community 79 - "ErrorReporting.kt"
-Cohesion: 0.18
-Nodes (6): classifyTransport(), isCancellation(), raise(), report(), toFailure(), isTlsIntercepted()
+Cohesion: 0.13
+Nodes (10): AnililiException, AnililiFailure, anililiFailure(), asFailure(), classifyTransport(), isCancellation(), raise(), report() (+2 more)
 
-### Community 80 - "PopupGlass.kt"
-Cohesion: 0.15
-Nodes (5): blurLine(), boxBlur(), PopupBackdrop, popupGlass(), rememberPopupBackdrop()
+### Community 80 - "OpenSubtitlesPanel.kt"
+Cohesion: 0.23
+Nodes (4): defaultOpenSubtitlesLanguages(), openSubtitlesEpisodeField(), OpenSubtitlesPanel(), SubtitleResultRow()
+
+### Community 81 - "AppColorScheme.kt"
+Cohesion: 0.11
+Nodes (6): AppColors, appColors(), swatch(), ThemeSpec, wallpaperSeed(), AnimepaheDLTheme()
 
 ### Community 82 - "CatalogViewModel.kt"
-Cohesion: 0.17
-Nodes (9): Cached, catalogPageForSource(), CatalogSource, EROTICMV, KISSKH, CatalogSourceOrder, CatalogSourcePreferences, MovieCatalogConfig (+1 more)
+Cohesion: 0.29
+Nodes (6): catalogPageForSource(), CatalogSource, EROTICMV, KISSKH, CatalogSourceOrder, CatalogSourcePreferences
 
 ### Community 83 - "SiteMetadataApi"
-Cohesion: 0.10
-Nodes (14): MetadataSite, EROTICMV, KISSKH, SiteMetadataApi, SiteMetadataApis, KissKH metadata API, Query/API use, Scope and completeness limits (+6 more)
+Cohesion: 0.11
+Nodes (13): MetadataSite, EROTICMV, KISSKH, SiteMetadataApi, SiteMetadataApis, API methods and routing, Live audit evidence, Narto Drama public metadata API (+5 more)
 
 ### Community 84 - "SiteDownloadEpisode"
-Cohesion: 0.16
-Nodes (12): isPreparedQueueRow(), mergePreparedQueueRows(), pendingEpisodeRowId(), batches(), chronologicalSiteEpisodes(), SiteDownloadBatch, SiteDownloadPreparation, downloadEpisodeDisplayOrder() (+4 more)
+Cohesion: 0.22
+Nodes (8): batches(), chronologicalSiteEpisodes(), SiteDownloadBatch, SiteDownloadPreparation, downloadEpisodeDisplayOrder(), parseSiteDownloadSelection(), SiteDownloadEpisode, SiteDownloadSelectionSafetyTest
 
 ### Community 85 - "ErrorNotice.kt"
 Cohesion: 0.31
 Nodes (5): DetailLine(), ErrorCodeChip(), ErrorDetailsDialog(), failureAnnotated(), MidnightErrorNotice()
 
 ### Community 86 - "AnimeRepository.kt"
-Cohesion: 0.08
-Nodes (23): AnimeRepository, AnimeRepository, AnimeRepository, Anime, AnimeDetails, AnimeNetwork, AnimeRepository, Episode (+15 more)
+Cohesion: 0.17
+Nodes (11): AnimeRepository, Anime, AnimeDetails, AnimeRepository, Episode, HttpFailure, isMediaPath(), text() (+3 more)
+
+### Community 87 - "instrumentationregistry"
+Cohesion: 0.18
+Nodes (4): PreparationResponsivenessTest, SearchRecoveryTest, AnimeRepository, AnimeRepository
 
 ### Community 88 - "SubtitleSearchLanguage"
 Cohesion: 0.11
@@ -605,87 +585,63 @@ Nodes (17): SubtitleSearchLanguage, ARABIC, CHINESE, ENGLISH, FOLLOW_DEVICE, FRE
 
 ### Community 89 - "SiteDownloadSources.kt"
 Cohesion: 0.10
-Nodes (17): toAppMetadata(), eroticVideoSource(), jsonAfterMarker(), jsonArrayOrEmpty(), jsonInt(), jsonObjectOrEmpty(), jsonString(), matchesInspection() (+9 more)
+Nodes (20): toAppMetadata(), chooseMediaVariant(), eroticVideoSource(), jsonAfterMarker(), jsonArrayOrEmpty(), jsonInt(), jsonObjectOrEmpty(), jsonString() (+12 more)
 
 ### Community 90 - "LibraryTools.kt"
 Cohesion: 0.20
 Nodes (7): classifyFailure(), diagnostics(), inspectStorage(), QueueOrder, StorageReport, verifyCopy(), OutputStream
 
 ### Community 91 - "ResolvedMedia"
-Cohesion: 0.13
-Nodes (8): mediaRequestHeaders(), MediaRequests, SiteDownloadCookieStore, isPendingRow(), pausePending(), resumePending(), ResolvedMedia, SiteDownloadDownloadTest
-
-### Community 92 - "instrumentationregistry"
-Cohesion: 0.05
-Nodes (7): DeletionTestProvider, ExampleInstrumentedTest, PreparationResponsivenessTest, SearchRecoveryTest, ThreadTraceListener, TimerTask, AnimeApplication
-
-### Community 93 - "FlixcloudPlaylistDataSource.kt"
-Cohesion: 0.23
-Nodes (5): decodeFlixcloudPlaylist(), decodeFlixcloudSegment(), FlixcloudPlaylistDataSource, matchesAt(), unwrapFlixcloudSegmentInPlace()
+Cohesion: 0.14
+Nodes (7): DownloadIdentity, ExportRecord, mediaRequestHeaders(), MediaRequests, SiteDownloadCookieStore, ResolvedMedia, SiteDownloadDownloadTest
 
 ### Community 94 - "LocalStreamProxy"
-Cohesion: 0.23
-Nodes (4): Entry, LocalStreamProxy, RootHeaderContext, ServerEndpoint
+Cohesion: 0.26
+Nodes (5): Entry, LocalStreamProxy, requireNoHttpUserInfo(), RootHeaderContext, ServerEndpoint
 
 ### Community 96 - "RemoteDownloadSheet"
-Cohesion: 0.21
-Nodes (7): Thumbnail(), DownloadSectionLabel(), MetadataTermChips(), RemoteDetailHero(), RemoteDownloadSheet(), SiteDownloadScreen(), SiteMetadataHighlights()
-
-### Community 97 - "SafeDeletion.kt"
-Cohesion: 0.20
-Nodes (10): subtitleSidecarName(), deleteEmptyDirectoriesUpTo(), deleteOutputCompanions(), deleteOwnedMedia(), findOutputSubtitleSidecars(), isOutputSubtitleSidecar(), isPlayableOutputSubtitle(), localSubtitleUriExists() (+2 more)
+Cohesion: 0.19
+Nodes (8): Thumbnail(), DownloadSectionLabel(), MetadataTermChips(), RemoteDetailHero(), RemoteDownloadSheet(), SiteDownloadCookiesDialog(), SiteDownloadScreen(), SiteMetadataHighlights()
 
 ### Community 98 - ".page"
-Cohesion: 0.33
-Nodes (3): catalogImage(), EroticMvCatalog, OtherCatalogHttp
+Cohesion: 0.20
+Nodes (5): catalogImage(), EroticMvCatalog, OtherCatalogHttp, CatalogPage, SiteCatalog
 
-### Community 99 - ".editCaptionStyle"
-Cohesion: 0.11
-Nodes (9): CaptionAppearanceDialog(), CaptionAppearanceEditor(), CaptionChoiceRow(), captionOffset(), CaptionPlacementPad(), CaptionSample(), horizontalAnchorLabel(), marginLabel() (+1 more)
-
-### Community 100 - "LibraryNavigationTest"
-Cohesion: 0.16
-Nodes (5): DownloadSelectionTest, LibraryNavigationTest, AppSettings, Device verification, FFmpeg
-
-### Community 101 - ".onPlayerError"
-Cohesion: 0.12
-Nodes (10): playbackFailureEntry(), httpFailureSummary(), shouldRetryDecoderAtLowerVideoResolution(), numberKeyDigit(), shouldRecoverSeekError(), tvDpadSeekPresses(), tvNumberSeekTargetMs(), tvSeekTargetMs() (+2 more)
+### Community 99 - "CatalogViewModel.kt"
+Cohesion: 0.20
+Nodes (4): Cached, catalogCacheJson(), MovieCatalogConfig, shouldPreserveCatalogResultsOnRefresh()
 
 ### Community 102 - "AnnouncementSource.kt"
 Cohesion: 0.35
 Nodes (7): Announcement, announcementApplies(), AnnouncementFetchResult, AnnouncementSource, compareAppVersions(), parseAnnouncement(), sanitizeAnnouncementUrl()
 
-### Community 104 - "KwikPlaylistDataSource.kt"
-Cohesion: 0.19
-Nodes (3): hlsIv(), KwikPlaylistDataSource, rewriteKwikPlaylistIvs()
+### Community 104 - "FlixcloudPlaylistDataSource.kt"
+Cohesion: 0.05
+Nodes (15): decodeFlixcloudPlaylist(), decodeFlixcloudSegment(), FlixcloudPlaylistDataSource, matchesAt(), unwrapFlixcloudSegmentInPlace(), hlsIv(), KwikPlaylistDataSource, rewriteKwikPlaylistIvs() (+7 more)
 
 ### Community 105 - "Test"
-Cohesion: 0.23
-Nodes (3): parseByteRange(), SearchVerificationGate, RecoveryPolicyTest
+Cohesion: 0.10
+Nodes (12): parseByteRange(), Details, Download, OperationFailure, OperationId, Preparation, presented(), Search (+4 more)
 
 ### Community 106 - "metadataFromDocument"
-Cohesion: 0.24
-Nodes (7): Document, eroticTaxonomy(), metadataDurationSeconds(), metadataFromDocument(), metadataFromHtml(), metadataPayload(), MetadataResponse
+Cohesion: 0.11
+Nodes (11): Document, EroticMvMetadataApi, eroticTaxonomy(), MetadataHttp, MetadataResponse, Absent or conditional information, Browse and filtering, Coverage and retained data (+3 more)
+
+### Community 107 - "GlassSection"
+Cohesion: 0.25
+Nodes (7): GlassSection, BROWSE, DETAILS, HOME, NAVIGATION, POPUPS, REFRESH
 
 ### Community 108 - "ThemeAccent"
-Cohesion: 0.13
-Nodes (13): ThemeAccent, BLOOD_RED, CUSTOM, CYAN, EMERALD, GOLD, MONOCHROME, NEON_GREEN (+5 more)
+Cohesion: 0.07
+Nodes (24): accentSeedOf(), AppBackdropDim, LIGHT, MEDIUM, STRONG, AppBackdropSource, ANIME, IMAGE (+16 more)
 
-### Community 109 - "Test"
-Cohesion: 0.19
-Nodes (3): requireNoHttpUserInfo(), LocalStreamProxyResourceLimitsTest, Callback
-
-### Community 111 - "EpisodeControlPlayer"
-Cohesion: 0.14
-Nodes (4): applyPreferredAudioLanguage(), applyPreferredSubtitleLanguage(), EpisodeControlPlayer, preferredLanguageCodes()
+### Community 111 - "CaptionPosition"
+Cohesion: 0.10
+Nodes (11): CaptionPosition, BOTTOM, TOP, applyCaptionEdgeInset(), applyCaptionStyle(), applyContentAspectRatio(), bindUnifiedSettingsButton(), CaptionEdgeInset (+3 more)
 
 ### Community 112 - ".check"
-Cohesion: 0.20
+Cohesion: 0.18
 Nodes (3): AnnouncementManager, AnnouncementScheduler, NotificationPreferences()
-
-### Community 113 - "OperationRecovery.kt"
-Cohesion: 0.14
-Nodes (9): Details, Download, OperationFailure, OperationId, Preparation, presented(), Search, Sources (+1 more)
 
 ### Community 114 - "SourceOptions.kt"
 Cohesion: 0.27
@@ -695,29 +651,33 @@ Nodes (6): audioLabel(), commonSourceOptions(), EpisodeSource, parseEpisodeSourc
 Cohesion: 0.14
 Nodes (14): ErrorDomain, ACCOUNT, APP, BACKUP, DIAGNOSTICS, DOWNLOAD, EXPORT, LINK (+6 more)
 
-### Community 117 - "Narto Drama public metadata API"
-Cohesion: 0.40
-Nodes (4): API methods and routing, Live audit evidence, Narto Drama public metadata API, Not supplied / not automatically fetched
-
-### Community 118 - "MetadataHttp"
-Cohesion: 0.16
-Nodes (8): MetadataHttp, CatalogSessionCookies, Absent or conditional information, Browse and filtering, Coverage and retained data, Kiss18 public metadata API, Sources actually visited, Verification
+### Community 117 - "decodeRelayFrame"
+Cohesion: 0.38
+Nodes (5): decodeRelayFrame(), EndOfStoredEvents, Event, RelayFrame, RelayFrameDecision
 
 ### Community 119 - "AppGraph"
-Cohesion: 0.18
-Nodes (7): AppGraph, Profiles, File inventory, Necessary host adaptations, Original Anilili player port, Player-port release verification (2026-11-08), Review checklist
+Cohesion: 0.20
+Nodes (5): AppGraph, playsInWebView(), Profiles, ProviderCatalog, Necessary host adaptations
 
-### Community 123 - "PlayerSeekMarkers.kt"
-Cohesion: 0.36
-Nodes (5): SkipTimes, drawPlayerSeekMarkers(), PlayerSeekMarker, playerSeekMarkerFractions(), playerSeekMarkers()
+### Community 122 - "SecureTokenStore"
+Cohesion: 0.13
+Nodes (3): SecureTokenStore, CrashReporter, DiagnosticsLog
+
+### Community 123 - "Security and privacy findings"
+Cohesion: 0.29
+Nodes (7): S1 — Cache server reads unbounded lines before checking their length (P2, high confidence), S2 — Remote response bodies and pagination lack resource bounds (P2, high confidence), S3 — Verification completion accepts unrelated HTTPS pages (P2, high confidence), S4 — Session reset can race background network users (P2, high confidence), S5 — Native artifact verification checks size, not identity (P2, high confidence), S6 — Diagnostic redaction is incomplete (P3, high confidence), Security and privacy findings
 
 ### Community 124 - "ThemePreset"
-Cohesion: 0.17
-Nodes (12): ThemePreset, CRIMSON_NIGHT, CYBER, DEEP_SEA, EMBER, FOREST, GILDED, HIGH_CONTRAST (+4 more)
+Cohesion: 0.07
+Nodes (24): ThemeBackground, AMOLED, DARK, ThemeContrast, HIGH, MEDIUM, STANDARD, ThemePreset (+16 more)
 
-### Community 127 - "AutoSkipCountdown.kt"
-Cohesion: 0.23
-Nodes (5): AutoSkipButtonBounds(), AutoSkipCountdown, autoSkipCountdownLabel(), autoSkipSweep(), runAutoSkipCountdown()
+### Community 125 - "LocalStreamProxyHeaderPolicyTest"
+Cohesion: 0.18
+Nodes (3): HttpOrigin, RootHeaderPolicyInterceptor, LocalStreamProxyHeaderPolicyTest
+
+### Community 127 - "SiteDownloadViewModel.kt"
+Cohesion: 0.17
+Nodes (10): PreparationStatus, isPreparedQueueRow(), mergePreparedQueueRows(), pendingEpisodeRowId(), appSiteDownloadRepository(), isPendingRow(), libraryRows(), pausePending() (+2 more)
 
 ### Community 128 - "SkipTimingStatus"
 Cohesion: 0.15
@@ -728,23 +688,31 @@ Cohesion: 0.15
 Nodes (13): TvPlayerControl, CAPTIONS, EPISODES, FORWARD, FULLSCREEN, MUTE, MY_LIST, NEXT (+5 more)
 
 ### Community 131 - "CatalogScreen"
-Cohesion: 0.13
-Nodes (4): CatalogScreen(), catalogHomeSections(), ReferenceHomeChrome(), WebSocketListener
+Cohesion: 0.15
+Nodes (3): CatalogScreen(), catalogHomeSections(), ReferenceHomeChrome()
 
 ### Community 132 - "downloadLocation"
 Cohesion: 0.29
 Nodes (7): DownloadLocation, downloadLocation(), episodeTitle(), outputLocation(), safeFileName(), audioTag(), DownloadNamingTest
 
-### Community 135 - "ThemeSettings.kt"
-Cohesion: 0.22
-Nodes (7): accentSeedOf(), AppBackdropSource, ANIME, IMAGE, NONE, backdropUrlOf(), ProfileLook
+### Community 134 - "UI and usability findings"
+Cohesion: 0.29
+Nodes (7): U1 — Failed episodes are labeled “Queued” in details (P2), U2 — Search results can belong to an earlier query (P2), U3 — Documented year/type filters are absent (P3), U4 — Library grouping parses presentation text (P2), U5 — Settings failures use success-like styling (P3), U6 — Accessibility/localization coverage needs expansion (P3, verification gap), UI and usability findings
+
+### Community 135 - "RelatedLayout"
+Cohesion: 0.33
+Nodes (3): RelatedLayout, LIST, TITLES
+
+### Community 136 - ".configureRequestHeaders"
+Cohesion: 0.25
+Nodes (3): mediaRequestHeaders(), PlaybackStatus, onStart()
 
 ### Community 138 - "c"
 Cohesion: 0.33
 Nodes (4): deadLoadExhausted(), isStreamRefusal(), refusalEndsStream(), StreamRefusalLoadErrorPolicy
 
 ### Community 139 - "DpadLongPress.kt"
-Cohesion: 0.29
+Cohesion: 0.26
 Nodes (5): dpadClickable(), DpadPress, CLICK, LONG_CLICK, DpadPressTracker
 
 ### Community 140 - "DownloadRow"
@@ -755,13 +723,13 @@ Nodes (5): downloadGroupArtwork(), DownloadLibrarySnapshot, downloadLibrarySnaps
 Cohesion: 0.14
 Nodes (5): HostPlaybackSnapshot, onStop(), Binding, ReferencePlaybackRegistry, close()
 
-### Community 144 - "DefaultQuality"
-Cohesion: 0.17
-Nodes (10): DefaultQuality, AUTO, HIGHEST, P1080, P360, P480, P720, defaultQualityForDevice() (+2 more)
+### Community 144 - "KissKH metadata API"
+Cohesion: 0.33
+Nodes (5): KissKH metadata API, Query/API use, Scope and completeness limits, Structured mapping, Verified endpoints and public data
 
-### Community 145 - "PlaybackBufferSize"
-Cohesion: 0.25
-Nodes (6): PlaybackBufferSize, AUTOMATIC, LARGE, MEDIUM, SMALL, VERY_LARGE
+### Community 145 - "TvTextInputType"
+Cohesion: 0.40
+Nodes (5): TvTextInputType, EMAIL, NUMBER, PASSWORD, TEXT
 
 ### Community 146 - "EpisodeDownloads"
 Cohesion: 0.17
@@ -775,13 +743,17 @@ Nodes (6): MidnightSettingRow(), MidnightSettingRowScaffold(), MidnightSettingSp
 Cohesion: 0.25
 Nodes (6): PlayerBars, ALL, NONE, STATUS_ONLY, playerBarsFor(), PlayerSystemBarsEffect()
 
-### Community 151 - "CatalogItem"
-Cohesion: 0.21
-Nodes (7): catalogCacheJson(), CatalogFailureState, catalogFailureState(), CatalogItem, CatalogPage, SiteCatalog, CatalogViewModelTest
+### Community 150 - "AnnouncementManager.kt"
+Cohesion: 0.05
+Nodes (6): OpenSubtitlesAuthManager, OpenSubtitlesCredentials, findActivity(), AnnouncementWorker, build.sh script, usage()
 
-### Community 152 - "PlatformErrorCodes.kt"
-Cohesion: 0.36
-Nodes (4): causeChain(), platformErrorCode(), platformErrorName(), technicalDetail()
+### Community 151 - "CatalogItem"
+Cohesion: 0.42
+Nodes (4): CatalogFailureState, catalogFailureState(), CatalogItem, CatalogViewModelTest
+
+### Community 152 - "AnimeRepository.kt"
+Cohesion: 0.08
+Nodes (14): AnimeNetwork, findMediaUrl(), ResultSort, NEWEST, OLDEST, RELEVANCE, TITLE, sortResults() (+6 more)
 
 ### Community 153 - ".row"
 Cohesion: 0.40
@@ -791,9 +763,9 @@ Nodes (3): DownloadGroupProgress, downloadGroupProgress(), DownloadGroupProgress
 Cohesion: 0.18
 Nodes (10): Current pending release: player controls and download playback state, Final saved-shows verification (cheaper subagent), Found and fixed, Library and Settings/announcements release, Notice failure follow-up and Korean-only KissKH, Offline-preferred playback (pending device verification), Player-port release verification (2026-11-08), Real-device verification (+2 more)
 
-### Community 155 - "GlassSection"
-Cohesion: 0.16
-Nodes (9): GlassSection, BROWSE, DETAILS, HOME, NAVIGATION, POPUPS, REFRESH, backdropBlur() (+1 more)
+### Community 155 - "size"
+Cohesion: 0.10
+Nodes (5): backdropBlur(), glassEnabled(), AutoSkipButtonBounds(), autoSkipSweep(), chromeFade()
 
 ### Community 156 - "ErrorAction"
 Cohesion: 0.20
@@ -807,6 +779,18 @@ Nodes (7): isDeclaredHlsPlaylist(), looksLikeHlsPlaylist(), replaceUri(), resolv
 Cohesion: 0.20
 Nodes (10): EmbedAutoAdvanceStep, embedAutoAdvanceStep(), ADVANCE, ARM, WAIT, NextEpisodeTrigger, nextEpisodeTrigger(), AFTER_CREDITS (+2 more)
 
+### Community 160 - "URI"
+Cohesion: 0.11
+Nodes (12): subtitleSidecarName(), DownloadRepository, deleteEmptyDirectoriesUpTo(), deleteOutputCompanions(), deleteOwnedMedia(), findOutputSubtitleSidecars(), isOutputSubtitleSidecar(), isPlayableOutputSubtitle() (+4 more)
+
+### Community 161 - "MidnightNoticeTone"
+Cohesion: 0.40
+Nodes (5): MidnightNoticeTone, ERROR, INFO, SUCCESS, WARNING
+
+### Community 162 - "CategoryAudioDecision"
+Cohesion: 0.50
+Nodes (5): CategoryAudioDecision, categoryAudioDecision(), NotReady, Select, Settled
+
 ### Community 163 - "Reliability and correctness findings"
 Cohesion: 0.20
 Nodes (10): R10 — Cancellation deadlines are not hard limits on all provider/native operations (P2, risk requiring device/provider reproduction), R1 — Failed persistence writes leave authoritative memory ahead of disk (P1, high confidence), R3 — Direct enqueue has a process-death orphan window (P1, high confidence), R4 — HLS validation does not require expected audio (P1, high confidence), R5 — Final destination validation is weaker than staging validation (P1, high confidence), R6 — Unhandled action failures can crash the app (P2, high confidence), R7 — Retry can discard the only reference to unfinished output (P2, high confidence), R8 — Export service waits throughout transfers (P2, high confidence) (+2 more)
@@ -819,29 +803,33 @@ Nodes (9): Anilili Movies, Browse, play and download, Build, Downloads, Library 
 Cohesion: 0.22
 Nodes (9): TvPlayerBackTarget, CAPTION_APPEARANCE, CAPTIONS, tvPlayerBackTarget(), CONTROLS, EPISODE_DRAWER, NONE, OPEN_SUBTITLES (+1 more)
 
-### Community 167 - "MidnightChoicePicker"
-Cohesion: 0.29
-Nodes (7): MidnightInlineNotice(), MidnightNoticeTone, ERROR, INFO, SUCCESS, WARNING, MidnightChoicePicker()
+### Community 167 - "SavedFilesWatcher.kt"
+Cohesion: 0.23
+Nodes (3): missingSavedFiles(), querySavedFiles(), SavedFilesWatcher
 
 ### Community 168 - "FailureReason"
 Cohesion: 0.22
 Nodes (9): FailureReason, DELETION, EXPIRED_SOURCE, FOLDER_ACCESS, INCOMPATIBLE_EXPORT, NETWORK, STORAGE_FULL, UNKNOWN (+1 more)
 
-### Community 170 - ".isChallenge"
-Cohesion: 0.18
-Nodes (4): SessionChecks, verificationOriginMatches(), SessionChecksTest, VerificationPageTest
+### Community 170 - "cached"
+Cohesion: 0.60
+Nodes (3): opensTvPlayerControls(), cached(), Key
 
 ### Community 172 - "ClockFormat"
 Cohesion: 0.25
 Nodes (5): ClockFormat, SYSTEM, TWELVE_HOUR, TWENTY_FOUR_HOUR, timeOfDayFormatter()
 
 ### Community 173 - "DownloadQuality"
-Cohesion: 0.25
-Nodes (6): DownloadQuality, BEST, P1080, P360, P480, P720
+Cohesion: 0.12
+Nodes (10): DownloadQuality, BEST, P1080, P360, P480, P720, MenuLanguage, ENGLISH (+2 more)
 
 ### Community 174 - "PlayerAspectRatio"
 Cohesion: 0.25
 Nodes (6): PlayerAspectRatio, ORIGINAL, RATIO_16_9, RATIO_21_9, RATIO_4_3, SQUARE
+
+### Community 176 - "UI parity and usability checklist"
+Cohesion: 0.40
+Nodes (4): Corrections made in this pass, Screen and component review, UI parity and usability checklist, Verification still needed
 
 ### Community 178 - "TransferState"
 Cohesion: 0.25
@@ -851,117 +839,69 @@ Nodes (8): TransferState, COMPLETE, DOWNLOADING, FAILED, PAUSED, QUEUED, REMOVIN
 Cohesion: 0.25
 Nodes (7): Anilili feature audit checklist, Artwork and reliability, Download management, Playback and personal library, Release gate, Settings and appearance from Anilili, Source, search, and metadata
 
-### Community 183 - "MenuLanguage"
-Cohesion: 0.29
-Nodes (4): MenuLanguage, ENGLISH, SPANISH, SYSTEM
-
-### Community 184 - "ThemeStyle"
-Cohesion: 0.29
-Nodes (5): ThemeStyle, NEUTRAL, TONAL, VIBRANT, VIVID
-
-### Community 187 - "Theme.kt"
-Cohesion: 0.52
-Nodes (4): appColors(), ThemeSpec, wallpaperSeed(), AnimepaheDLTheme()
-
 ### Community 191 - "ReferenceChromeTokens.kt"
 Cohesion: 0.43
 Nodes (3): appCanvasFade(), drawCanvasFade(), Midnight
 
 ### Community 192 - "DownloadAction"
-Cohesion: 0.18
-Nodes (10): Availability, SAVED, STAGING, DownloadAction, DELETE, PAUSE, RESUME, RETRY (+2 more)
+Cohesion: 0.11
+Nodes (17): Availability, SAVED, STAGING, DownloadAction, DELETE, PAUSE, RESUME, RETRY (+9 more)
 
-### Community 193 - "SaveState"
-Cohesion: 0.29
-Nodes (7): SaveState, CHECKING, COPYING, FAILED, NONE, PREPARING, WAITING
-
-### Community 194 - "Security and privacy findings"
-Cohesion: 0.29
-Nodes (7): S1 — Cache server reads unbounded lines before checking their length (P2, high confidence), S2 — Remote response bodies and pagination lack resource bounds (P2, high confidence), S3 — Verification completion accepts unrelated HTTPS pages (P2, high confidence), S4 — Session reset can race background network users (P2, high confidence), S5 — Native artifact verification checks size, not identity (P2, high confidence), S6 — Diagnostic redaction is incomplete (P3, high confidence), Security and privacy findings
-
-### Community 195 - "Review implementation status"
+### Community 194 - "Review implementation status"
 Cohesion: 0.29
 Nodes (5): Latest user corrections, Reliability and security, Review implementation status, UI, performance, and features, Verification
 
-### Community 196 - "DiscordStatus"
+### Community 197 - "PosterElement"
+Cohesion: 0.20
+Nodes (9): encodeHiddenPosterElements(), PosterElement, ADULT, DETAILS, DUB, NEW_EPISODES, PROGRESS, SCORE (+1 more)
+
+### Community 201 - "UiState.kt"
 Cohesion: 0.33
-Nodes (4): DiscordStatus, DO_NOT_DISTURB, IDLE, ONLINE
-
-### Community 197 - "RelatedLayout"
-Cohesion: 0.33
-Nodes (3): RelatedLayout, LIST, TITLES
-
-### Community 198 - "AppBackdropDim"
-Cohesion: 0.33
-Nodes (4): AppBackdropDim, LIGHT, MEDIUM, STRONG
-
-### Community 199 - "ThemeBackground"
-Cohesion: 0.33
-Nodes (3): ThemeBackground, AMOLED, DARK
-
-### Community 200 - "ThemeContrast"
-Cohesion: 0.33
-Nodes (4): ThemeContrast, HIGH, MEDIUM, STANDARD
-
-### Community 201 - "ReferenceVideoPlayer.kt"
-Cohesion: 0.14
-Nodes (11): AnililiException, AnililiFailure, anililiFailure(), asFailure(), ErrorBox(), LoadingBox(), Error, Loading (+3 more)
-
-### Community 203 - "UI and usability findings"
-Cohesion: 0.29
-Nodes (7): U1 — Failed episodes are labeled “Queued” in details (P2), U2 — Search results can belong to an earlier query (P2), U3 — Documented year/type filters are absent (P3), U4 — Library grouping parses presentation text (P2), U5 — Settings failures use success-like styling (P3), U6 — Accessibility/localization coverage needs expansion (P3, verification gap), UI and usability findings
+Nodes (5): Error, Loading, rethrowIfCancellation(), Success, UiState
 
 ### Community 206 - "UiScale"
 Cohesion: 0.33
 Nodes (4): UiScale, LARGE, MEDIUM, SMALL
 
-### Community 207 - "PlaylistForeignSegments.kt"
-Cohesion: 0.70
-Nodes (4): hostOf(), playlistForeignHosts(), playlistSegmentCensus(), segmentHosts()
-
 ### Community 211 - "Dramatip metadata API"
 Cohesion: 0.40
 Nodes (4): Dramatip metadata API, Live evidence and limits, Public surfaces and methods, Verified fields retained
-
-### Community 213 - "TvTextInputType"
-Cohesion: 0.40
-Nodes (5): TvTextInputType, EMAIL, NUMBER, PASSWORD, TEXT
 
 ### Community 218 - "EroticMV metadata API"
 Cohesion: 0.50
 Nodes (3): Endpoints and operations, EroticMV metadata API, Fields retained
 
-### Community 220 - "UI parity and usability checklist"
-Cohesion: 0.40
-Nodes (4): Corrections made in this pass, Screen and component review, UI parity and usability checklist, Verification still needed
+### Community 221 - "TvEpisodeChangeFocus"
+Cohesion: 0.32
+Nodes (8): TvEpisodeChangeFocus, tvEpisodeChangeFocus(), CONTROLS, HOLD, SURFACE, UNCHANGED, tvFocusLostTarget(), tvOverlayDismissFocus()
 
-### Community 221 - "CategoryAudioDecision"
-Cohesion: 0.50
-Nodes (5): CategoryAudioDecision, categoryAudioDecision(), NotReady, Select, Settled
+### Community 235 - "verificationPage"
+Cohesion: 0.27
+Nodes (4): verificationPage(), SessionBrowser(), verificationOriginMatches(), VerificationPageTest
 
-### Community 222 - "cached"
-Cohesion: 0.60
-Nodes (3): opensTvPlayerControls(), cached(), Key
+### Community 266 - "GestureDragAxis"
+Cohesion: 0.67
+Nodes (3): GestureDragAxis, Horizontal, Vertical
 
 ## Knowledge Gaps
 - **479 isolated node(s):** `Preparation`, `Search`, `Sources`, `NotReady`, `Settled` (+474 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1238 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **95 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1241 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **82 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `SettingsStore` connect `SettingsStore` to `LibraryScreens.kt`, `AniListModels.kt`, `InPlayerEpisodeList.kt`, `TvTextField.kt`, `PlayerSurface.kt`, `ThemeSettings.kt`, `TvPlayerControls.kt`, `CaptionStyle`, `PlayerSurface`, `PlayerGestureControls.kt`, `AppBackdrop.kt`, `DefaultQuality`, `AppDeviceProfile.kt`, `PlaybackBufferSize`, `MediaCache.kt`, `PlayerSystemBars.kt`, `PlayerScreenLock.kt`, `GlassSection`, `SettingsStore.kt`, `PlaybackService.kt`, `LibraryScreens.kt`, `AppSymbol`, `AppDeviceProfile.kt`, `DownloaderViewModel.kt`, `.init`, `developer_notices.py`, `SubtitleCueLayout.kt`, `SourceFilterLanguage`, `ClockFormat`, `DownloadQuality`, `PlayerAspectRatio`, `PreferredAudioLanguage`, `Category`, `MenuLanguage`, `ThemeStyle`, `Theme.kt`, `DiscordStatus`, `RelatedLayout`, `AppBackdropDim`, `ThemeBackground`, `ThemeContrast`, `ReferenceVideoPlayer.kt`, `AppDns`, `PreferredSubtitleLanguage`, `UiScale`, `JsonPrimitive`, `PlayerSettingsSheet.kt`, `.editCaptionStyle`, `ThemeAccent`?**
-  _High betweenness centrality (0.098) - this node is a cross-community bridge._
+- **Why does `DiagnosticsLog` connect `SecureTokenStore` to `ExternalPlayer.kt`, `PlayerGestureControls.kt`, `PlayerSurface.kt`, `AppBackdrop.kt`, `LegacyTrustAnchors.kt`, `MediaCache.kt`, `CastRoutes.kt`, `AnnouncementManager.kt`, `PlaybackBuffer.kt`, `SettingsStore.kt`, `PlaybackService.kt`, `SleepTimer.kt`, `TvFocusTarget.kt`, `LocalStreamProxy.kt`, `ArtworkBitmapLoader.kt`, `MegaPlayCdnHealth.kt`, `PlaybackDiagnostics.kt`, `AppDns`, `ErrorReporting.kt`, `FlixcloudPlaylistDataSource.kt`?**
+  _High betweenness centrality (0.086) - this node is a cross-community bridge._
 - **Are the 55 inferred relationships involving `PlayerSurface()` (e.g. with `.launch()` and `AutoSkipButtonBounds()`) actually correct?**
   _`PlayerSurface()` has 55 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `Preparation`, `Search`, `Sources` to the rest of the system?**
   _479 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `AnililiError` be split into smaller, more focused modules?**
   _Cohesion score 0.02 - nodes in this community are weakly interconnected._
-- **Why does `PlayerSurface()` connect `PlayerSurface` to `SkipTimingStatus`, `LibraryScreens.kt`, `ExternalPlayer.kt`, `InPlayerEpisodeList.kt`, `TvTextField.kt`, `PlayerSurface.kt`, `SettingsStore`, `.configureRequestHeaders`, `TvPlayerControls.kt`, `PlayerGestureControls.kt`, `DefaultQuality`, `EpisodeDownloads`, `ui/components/AnililiSilhouette.kt`, `PlayerSettingsSheet.kt`, `PlayerScreenLock.kt`, `SettingsStore.kt`, `PlaybackService.kt`, `NextEpisodeTrigger`, `SubtitleTrackMerge.kt`, `TvPlayerBackTarget`, `LibraryModels.kt`, `ExternalSubtitleFiles.kt`, `SleepTimer.kt`, `Category`, `c`, `Listener`, `CastButton`, `SubtitleDelay.kt`, `EroticMvMetadataApi.kt`, `SubtitleCueTimes.kt`, `MidnightHelper`, `.editCaptionStyle`, `.onPlayerError`, `CompiledSeparately`, `subtitleReprepareState`, `EpisodeControlPlayer`, `.check`, `PlayerSeekMarkers.kt`, `AutoSkipCountdown.kt`?**
-  _High betweenness centrality (0.070) - this node is a cross-community bridge._
+- **Why does `SettingsStore` connect `SettingsStore` to `LibraryScreens.kt`, `AniListModels.kt`, `InPlayerEpisodeList.kt`, `PlayerGestureControls.kt`, `PlayerSurface.kt`, `RelatedLayout`, `CaptionStyle`, `PlayerSurface`, `AppBackdrop.kt`, `AppDeviceProfile.kt`, `MediaCache.kt`, `PlayerSystemBars.kt`, `AnnouncementManager.kt`, `PlayerSettingsSheet.kt`, `PlaybackBuffer.kt`, `SettingsStore.kt`, `PlaybackService.kt`, `size`, `AppDeviceProfile.kt`, `.init`, `developer_notices.py`, `SubtitleCueLayout.kt`, `SourceFilterLanguage`, `ClockFormat`, `DownloadQuality`, `PlayerAspectRatio`, `PreferredAudioLanguage`, `Category`, `FloatingNavigationBar.kt`, `PosterElement`, `AppDns`, `PreferredSubtitleLanguage`, `UiScale`, `OpenSubtitlesPanel.kt`, `AppColorScheme.kt`, `GlassSection`, `ThemeAccent`, `CaptionPosition`, `ThemePreset`?**
+  _High betweenness centrality (0.077) - this node is a cross-community bridge._
 - **Should `LibraryScreens.kt` be split into smaller, more focused modules?**
-  _Cohesion score 0.06787878787878789 - nodes in this community are weakly interconnected._
-- **Why does `DiagnosticsLog` connect `DiagnosticsLog` to `ExternalPlayer.kt`, `InPlayerEpisodeList.kt`, `TvTextField.kt`, `PlayerSurface.kt`, `AppBackdrop.kt`, `LegacyTrustAnchors.kt`, `MediaCache.kt`, `CastRoutes.kt`, `AnnouncementManager.kt`, `PlayerScreenLock.kt`, `PlaybackBuffer.kt`, `SettingsStore.kt`, `PlaybackService.kt`, `DownloaderViewModel.kt`, `SleepTimer.kt`, `LocalStreamProxy.kt`, `CastButton`, `ArtworkBitmapLoader.kt`, `MegaPlayCdnHealth.kt`, `PlaybackDiagnostics.kt`, `AppDns`, `ErrorReporting.kt`, `FlixcloudPlaylistDataSource.kt`, `KwikPlaylistDataSource.kt`, `UniqueStreamKeyDataSource`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
+  _Cohesion score 0.08179162609542356 - nodes in this community are weakly interconnected._
+- **Why does `PlayerSurface()` connect `PlayerSurface` to `SkipTimingStatus`, `ExternalPlayer.kt`, `InPlayerEpisodeList.kt`, `PlayerGestureControls.kt`, `PlayerSurface.kt`, `SettingsStore`, `.configureRequestHeaders`, `PlayerControlsScaffold`, `CaptionStyle`, `PlayerGestureControls.kt`, `EpisodeDownloads`, `ui/components/AnililiSilhouette.kt`, `PlayerSettingsSheet.kt`, `ErrorNotice.kt`, `SettingsStore.kt`, `size`, `PlaybackService.kt`, `NextEpisodeTrigger`, `SubtitleTrackMerge.kt`, `TvPlayerBackTarget`, `LibraryModels.kt`, `ExternalSubtitleFiles.kt`, `SleepTimer.kt`, `Category`, `SubtitleItem`, `Listener`, `CastButton`, `SubtitleDelay.kt`, `EroticMvMetadataApi.kt`, `MidnightHelper`, `OpenSubtitlesPanel.kt`, `TvEpisodeChangeFocus`, `CaptionPosition`, `.check`, `AppGraph`?**
+  _High betweenness centrality (0.057) - this node is a cross-community bridge._
