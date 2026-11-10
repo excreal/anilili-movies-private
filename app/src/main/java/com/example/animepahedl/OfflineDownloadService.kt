@@ -116,6 +116,9 @@ object OfflineDownloads {
                     updates.tryEmit(Unit)
                 }
                 override fun onDownloadChanged(manager: DownloadManager, download: Download, finalException: Exception?) {
+                    DebugTrace.event("download_state", "id" to download.request.id.hashCode().toUInt().toString(),
+                        "state" to download.state, "bytes" to download.bytesDownloaded, "expectedBytes" to download.contentLength,
+                        "stopReason" to download.stopReason, "failureReason" to download.failureReason)
                     val challenge = finalException?.let { error ->
                         generateSequence<Throwable>(error) { it.cause }.filterIsInstance<VerificationRequired>().firstOrNull()
                     }

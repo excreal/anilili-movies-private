@@ -4,6 +4,6 @@ internal object AnnouncementHttp {
         .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build()
 }
 internal object DiagnosticsLog {
-    fun event(message: String) { android.util.Log.d("Announcements", message) }
-    fun throwable(message: String, failure: Throwable) { android.util.Log.w("Announcements", message, failure) }
+    fun event(message: String) { DebugTrace.event("announcement", "message" to message) }
+    fun throwable(message: String, failure: Throwable) { DebugTrace.event("announcement_failure", "message" to message, "type" to failure.javaClass.simpleName) }
 }

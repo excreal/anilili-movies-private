@@ -209,6 +209,10 @@ internal fun requireCachedHlsSegments(context: Context, id: String): Long {
             cachedResourceLength > 0 && offset < cachedResourceLength -> minOf(length, remainingResourceLength)
             else -> length
         }
+        DebugTrace.event("export_cache_range", "id" to id.hashCode().toUInt().toString(),
+            "resource" to key.hashCode().toUInt().toString(), "offset" to offset, "requestedLength" to length,
+            "resourceLength" to cachedResourceLength, "checkedLength" to size,
+            "cached" to (size > 0 && cache.isCached(key, offset, size)))
         require(size > 0 && cache.isCached(key, offset, size)) {
             "Source segment is missing or incomplete; cached media retained. Retry download."
         }
@@ -248,6 +252,7 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
     val executable = File(context.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so")
     require(executable.exists()) { "FFmpeg is available only on arm64 devices" }
     val durationUs = requireCachedHlsSegments(context, id)
+    DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
     val record = Exports.all(context)[id]
     val siteDownload = record?.identity?.isSiteDownload == true
     val server = CachedHlsServer(download.request.uri.toString().takeIf { siteDownload }, record?.quality ?: "Best")
@@ -280,5 +285,16 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
             if (process.waitFor() != 0) throw IOException(if (stalled.get()) "FFmpeg made no progress for two minutes. Retry save; the source is retained." else "FFmpeg could not remux the cached HLS stream")
             onProgress(100)
         } finally { watchdog.shutdownNow(); cancel?.dispose(); if (process.isAlive) process.destroyForcibly() }
-    } finally { server.close(); errors.delete() }
+    } finally {
+        server.close()
+        if (errors.exists()) {
+            errors.bufferedReader().use { reader ->
+                repeat(200) {
+                    val line = reader.readLine() ?: return@use
+                    DebugTrace.event("export_ffmpeg", "id" to id.hashCode().toUInt().toString(), "message" to line)
+                }
+            }
+            errors.delete()
+        }
+    }
 }
