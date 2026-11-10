@@ -283,6 +283,17 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
             } }
             coroutineContext.ensureActive()
             if (process.waitFor() != 0) throw IOException(if (stalled.get()) "FFmpeg made no progress for two minutes. Retry save; the source is retained." else "FFmpeg could not remux the cached HLS stream")
+            val actualDurationMs = android.media.MediaMetadataRetriever().run {
+                try {
+                    setDataSource(output.absolutePath)
+                    extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                } finally { release() }
+            }
+            require(isExportDurationComplete(durationUs / 1_000L, actualDurationMs)) {
+                "The assembled video is shorter than the source playlist. The cached download was retained; retry the download."
+            }
+            DebugTrace.event("export_duration_verified", "id" to id.hashCode().toUInt().toString(),
+                "expectedMs" to durationUs / 1_000L, "actualMs" to actualDurationMs)
             onProgress(100)
         } finally { watchdog.shutdownNow(); cancel?.dispose(); if (process.isAlive) process.destroyForcibly() }
     } finally {
