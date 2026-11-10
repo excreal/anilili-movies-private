@@ -99,6 +99,9 @@ object OfflineDownloads {
             val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
             require(record.identity?.isSiteDownload == true) { "This download record is not supported by this edition." }
             val media = requireNotNull(record.media) { "Video source context is missing. Retry to resolve this episode again." }
+            if (media.isHls() && record.identity?.anime?.session?.startsWith("sites:KISSKH:") == true) {
+                return@DownloaderFactory KisskhHlsDownloader(app, request, media, SiteDownloadCookieStore(app)::headerFor)
+            }
             val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor)).setTransferListener(transferListener)
                 .setDefaultRequestProperties(mediaRequestHeaders(media))
             val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)

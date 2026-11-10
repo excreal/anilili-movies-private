@@ -307,10 +307,10 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
     val download = OfflineDownloads.manager(context).downloadIndex.getDownload(id) ?: error("Temporary download is unavailable")
     val executable = File(context.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so")
     require(executable.exists()) { "FFmpeg is available only on arm64 devices" }
-    val durationUs = requireCachedHlsSegments(context, id)
-    DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
     val record = Exports.all(context)[id]
     val siteDownload = record?.identity?.isSiteDownload == true
+    val durationUs = requireCachedHlsSegments(context, id)
+    DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
     val server = CachedHlsServer(download.request.uri.toString().takeIf { siteDownload }, record?.quality ?: "Best")
     val errors = File(context.cacheDir, "ffmpeg-${id.hashCode().toUInt()}.log")
     try {

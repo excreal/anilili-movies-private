@@ -230,18 +230,26 @@ class ExportService : Service() {
             require(estimated <= 0 || available > estimated * if (record.tree.isBlank()) 2 else 1) { "Not enough space for assembly and final copy. Free storage and Retry save." }
             val direct = id.startsWith("direct:")
             val progressive = !direct && record.identity?.isSiteDownload == true && record.media?.isHls() == false
-            if (direct || progressive) {
-                val source = if (direct) getSystemService(DownloadManager::class.java)
-                    .getUriForDownloadedFile(id.removePrefix("direct:").toLong()) ?: error("Downloaded file is unavailable")
-                else {
-                    Exports.setProgress(id, ExportProgress("Preparing video", -1f))
-                    withExportProgressDeadline(id) { withContext(Dispatchers.IO) {
-                        copyCachedProgressive(id, temp) { copied ->
-                            ensureActive()
-                            Exports.setProgress(id, ExportProgress("Preparing video", if (estimated > 0) copied * 100f / estimated else -1f, copied))
-                        }
-                    } }
-                    Uri.fromFile(temp)
+            val kisskhHls = !direct && record.identity?.anime?.session?.startsWith("sites:KISSKH:") == true && record.media?.isHls() == true
+            if (direct || progressive || kisskhHls) {
+                val source = when {
+                    direct -> getSystemService(DownloadManager::class.java)
+                        .getUriForDownloadedFile(id.removePrefix("direct:").toLong()) ?: error("Downloaded file is unavailable")
+                    kisskhHls -> {
+                        val staged = kisskhHlsOutputFile(this, id)
+                        require(staged.isFile && staged.length() > 0L) { "FFmpeg's verified HLS download is unavailable. Retry download." }
+                        Uri.fromFile(staged)
+                    }
+                    else -> {
+                        Exports.setProgress(id, ExportProgress("Preparing video", -1f))
+                        withExportProgressDeadline(id) { withContext(Dispatchers.IO) {
+                            copyCachedProgressive(id, temp) { copied ->
+                                ensureActive()
+                                Exports.setProgress(id, ExportProgress("Preparing video", if (estimated > 0) copied * 100f / estimated else -1f, copied))
+                            }
+                        } }
+                        Uri.fromFile(temp)
+                    }
                 }
                 val extension = if (record.media?.mimeType == "video/webm" ||
                     record.media?.url?.toUri()?.path.orEmpty().endsWith(".webm", true) ||
@@ -310,9 +318,18 @@ class ExportService : Service() {
                 } else OfflineDownloads.manager(this).removeDownload(id)
             }
         } catch (e: TimeoutCancellationException) {
+            DebugTrace.event("export_failed", "id" to id.hashCode().toUInt().toString(),
+                "stage" to (Exports.progress[id]?.stage ?: "unknown"), "type" to e.javaClass.simpleName,
+                "message" to "Export stage timed out")
             Exports.all(this)[id]?.takeUnless { Exports.deleting(id) }?.let { Exports.put(this, id, it.copy(error = "Saving exceeded the stage time limit. Retry save; the source is retained.")) }
-        } catch (e: CancellationException) { throw e
+        } catch (e: CancellationException) {
+            DebugTrace.event("export_cancelled", "id" to id.hashCode().toUInt().toString(),
+                "stage" to (Exports.progress[id]?.stage ?: "unknown"), "deleting" to Exports.deleting(id))
+            throw e
         } catch (e: Exception) {
+            DebugTrace.event("export_failed", "id" to id.hashCode().toUInt().toString(),
+                "stage" to (Exports.progress[id]?.stage ?: "unknown"), "type" to e.javaClass.simpleName,
+                "message" to (e.message ?: "Could not save video"))
             Exports.all(this)[id]?.takeUnless { Exports.deleting(id) }?.let { Exports.put(this, id, it.copy(error = e.message ?: "Could not save video")) }
         } finally {
             Exports.clearProgress(id)
