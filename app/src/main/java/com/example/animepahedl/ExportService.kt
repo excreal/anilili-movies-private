@@ -198,6 +198,7 @@ class ExportService : Service() {
         }
         var pendingOutput: OutputDocument? = null
         var outputPublished = false
+        var createdSubtitleSidecars = emptyList<Uri>()
         try {
             val tree = record.tree.takeIf { hasOutputFolderAccess(this, it) } ?: AppSettings(this).outputTree
             if (!hasOutputFolderAccess(this, tree)) throw OutputFolderAccessRequired()
@@ -287,7 +288,7 @@ class ExportService : Service() {
                     verifyCopy(this@ExportService, destination.uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
                 } }
                 if (!Exports.all(this).containsKey(id) || Exports.deleting(id)) throw CancellationException("Download was removed")
-                publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
+                createdSubtitleSidecars = publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
                 withContext(Dispatchers.IO) { destination.publish() }
                 Exports.put(this, id, record.copy(uri = destination.uri.toString(), bytes = bytes, pendingUri = null))
                 DownloadStore.flush()
@@ -297,9 +298,10 @@ class ExportService : Service() {
             }
         } catch (found: ExistingVideoFound) {
             if (Exports.all(this).containsKey(id) && !Exports.deleting(id)) {
-                publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
+                createdSubtitleSidecars = publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
                 Exports.put(this, id, record.copy(uri = found.video.uri.toString(), bytes = found.video.bytes, pendingUri = null, error = ""))
                 DownloadStore.flush()
+                outputPublished = true
                 if (id.startsWith("direct:")) withContext(Dispatchers.IO) {
                     val number = id.removePrefix("direct:")
                     getSystemService(DownloadManager::class.java).remove(number.toLong())
@@ -315,6 +317,9 @@ class ExportService : Service() {
         } finally {
             Exports.clearProgress(id)
             withContext(NonCancellable + Dispatchers.IO) {
+                if (!outputPublished) createdSubtitleSidecars.asReversed().forEach { sidecar ->
+                    runCatching { deleteOwnedMedia(this@ExportService, sidecar) }
+                }
                 if (!outputPublished && pendingOutput != null) {
                     runCatching { deleteOwnedMedia(this@ExportService, pendingOutput.uri) }.onSuccess {
                         Exports.all(this@ExportService)[id]?.let { Exports.put(this@ExportService, id, it.copy(pendingUri = null)) }
@@ -437,6 +442,7 @@ class ExportService : Service() {
             }) ?: error("Cannot create output file")
         }
         verifyCreatedName(uri, record, extension)
+        var createdSidecars = emptyList<Uri>()
         try {
             Exports.put(this, id, record.copy(pendingUri = uri.toString()))
             DownloadStore.flush()
@@ -456,10 +462,13 @@ class ExportService : Service() {
             require(bytes > 0) { "Output is empty" }
             Exports.setProgress(id, ExportProgress("Checking saved video", 0f))
             verifyCopy(this@ExportService, uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
-            publishSubtitleSidecars(record, checkActive)
+            createdSidecars = publishSubtitleSidecars(record, checkActive)
             if (tree == null) require(contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) > 0) { "Output publication failed" }
             return uri to bytes
         } catch (e: Exception) {
+            createdSidecars.asReversed().forEach { sidecar ->
+                runCatching { deleteOwnedMedia(this@ExportService, sidecar) }
+            }
             runCatching { deleteOwnedMedia(this@ExportService, uri) }.onSuccess {
                 Exports.all(this)[id]?.let { Exports.put(this, id, it.copy(pendingUri = null)) }
             }
@@ -468,10 +477,10 @@ class ExportService : Service() {
     }
 
     /** Export normalized, app-owned caption files next to the completed video. */
-    private suspend fun publishSubtitleSidecars(record: ExportRecord, checkActive: () -> Unit) = withContext(Dispatchers.IO) {
+    private suspend fun publishSubtitleSidecars(record: ExportRecord, checkActive: () -> Unit): List<Uri> = withContext(Dispatchers.IO) {
         val location = record.outputLocation("mp4")
         val tracks = record.media?.subtitles.orEmpty()
-        if (tracks.isEmpty()) return@withContext
+        if (tracks.isEmpty()) return@withContext emptyList()
         val tree = record.tree.takeIf(String::isNotBlank)?.let(Uri::parse)
         val usedNames = mutableSetOf<String>()
         val created = mutableListOf<Uri>()
@@ -542,6 +551,7 @@ class ExportService : Service() {
             created.asReversed().forEach { runCatching { deleteOwnedMedia(this@ExportService, it) } }
             throw cancelled
         }
+        created.toList()
     }
     companion object {
         const val ACTION_CANCEL = "com.example.animepahedl.CANCEL_EXPORT"
