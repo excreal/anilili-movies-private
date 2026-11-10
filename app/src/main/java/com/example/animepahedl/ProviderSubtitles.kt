@@ -21,6 +21,8 @@ data class MediaSubtitle(val url: String, val label: String, val language: Strin
 
 /** Normalized files live outside cache so downloaded captions remain available offline. */
 internal object ProviderSubtitles {
+    // New names force existing downloads through the corrected normalizer once after upgrading.
+    private const val LOCALIZATION_VERSION = "kisskh-v2"
     private lateinit var context: Context
     @Volatile private var downloadsReady = false
     fun markDownloadsReady() { downloadsReady = true }
@@ -46,7 +48,9 @@ internal object ProviderSubtitles {
     }
     suspend fun localize(client: OkHttpClient, track: MediaSubtitle): MediaSubtitle = withContext(Dispatchers.IO) {
         val directory = File(context.filesDir, "provider-subtitles").apply { mkdirs() }
-        val hash = MessageDigest.getInstance("SHA-256").digest(track.url.toByteArray()).joinToString("") { "%02x".format(it) }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest("$LOCALIZATION_VERSION:${track.url}".toByteArray())
+            .joinToString("") { "%02x".format(it) }
         val target = File(directory, "$hash.vtt")
         if (!target.isFile || target.length() == 0L) {
             val request = providerSubtitleRequest(track)

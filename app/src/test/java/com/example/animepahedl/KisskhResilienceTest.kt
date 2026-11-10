@@ -61,6 +61,17 @@ class KisskhResilienceTest {
         assertEquals(listOf(available), result)
     }
 
+    @Test fun freshOfflineKisskhCaptionsReplaceStaleLanguageAndKeepOtherCachedLanguages() {
+        val staleEnglish = MediaSubtitle("file:///old/english.vtt", "English", "en")
+        val cachedKorean = MediaSubtitle("file:///old/korean.vtt", "Korean", "ko")
+        val freshEnglish = MediaSubtitle("file:///new/english.vtt", "English", "en")
+
+        assertEquals(listOf(freshEnglish, cachedKorean),
+            mergeKisskhSubtitleTracks(listOf(staleEnglish, cachedKorean), listOf(freshEnglish)))
+        assertEquals(listOf(staleEnglish, cachedKorean),
+            mergeKisskhSubtitleTracks(listOf(staleEnglish, cachedKorean), emptyList()))
+    }
+
     private fun secureServer(): Pair<MockWebServer, OkHttpClient> {
         val certificate = HeldCertificate.Builder().addSubjectAlternativeName("kisskh.do")
             .addSubjectAlternativeName("www.kisskh.do").build()

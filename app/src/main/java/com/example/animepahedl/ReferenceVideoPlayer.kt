@@ -150,7 +150,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                     }
                     ReferenceResolved(current, listOf(StreamItem(uri, "mp4", savedRow?.quality ?: localRecord?.quality,
                         savedRow?.audioCode ?: localRecord?.audio, null, true, null, null)), tracks, true, true,
-                        subtitleRefreshNeeded = tracks.size < storedTracks.size)
+                        subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
                 } else if (localOnlySeries) {
                     check(isLocalPlaybackUri(current.url)) { "This saved video is missing. Relink it in Downloads." }
                     val uri = current.url.toUri()
@@ -165,7 +165,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                     }
                     ReferenceResolved(current, listOf(StreamItem(current.url, "mp4", matchingRecord?.quality,
                         matchingRecord?.audio, null, true, null, null)), tracks, true, true,
-                        subtitleRefreshNeeded = tracks.size < storedTracks.size)
+                        subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
                 } else if (localRecord != null && current.id !in onlineOnly) {
                     val storedTracks = localRecord.media?.subtitles.orEmpty()
                     val tracks = playableLocalSubtitleTracks(storedTracks) { url ->
@@ -173,7 +173,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                     }
                     ReferenceResolved(current, listOf(StreamItem(localRecord.uri, "mp4", localRecord.quality, localRecord.audio,
                         null, true, null, null)), tracks, true, true,
-                        subtitleRefreshNeeded = tracks.size < storedTracks.size)
+                        subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
                 } else {
                     check(!localOnlySeries) { "This saved video is missing. Relink it in Downloads." }
                     val options = repository.resolveChoices(current.url, cookies.headerFor(current.url), includeSubtitles = false).map(cookies::applyTo)
@@ -214,7 +214,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                 runCatching { java.io.File(url.toUri().path.orEmpty()).isFile }.getOrDefault(false)
             }
         } else tracks
-        val refreshedSubtitles = (ready.subtitles + usableTracks).distinctBy { it.url }
+        val refreshedSubtitles = mergeKisskhSubtitleTracks(ready.subtitles, usableTracks)
         if (refreshedSubtitles.isEmpty()) return@LaunchedEffect
         val latest = loaded
         if (series.episodes.getOrNull(index)?.id != episodeId || attempt != resolvingAttempt || latest?.episode?.id != episodeId) return@LaunchedEffect

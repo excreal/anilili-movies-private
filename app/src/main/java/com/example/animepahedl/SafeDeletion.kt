@@ -19,6 +19,16 @@ internal fun isOutputSubtitleSidecar(candidate: String, mediaFileName: String): 
     return candidateExtension in outputSubtitleExtensions && candidateStem.equals(mediaStem, ignoreCase = true)
 }
 
+/** Remove empty download directories from [start] upward, stopping before [boundary]. */
+internal fun deleteEmptyDirectoriesUpTo(start: File, boundary: File) {
+    val root = boundary.canonicalFile
+    var current = start.canonicalFile
+    while (current != root && current.toPath().startsWith(root.toPath())) {
+        if (!current.isDirectory || current.list()?.isNotEmpty() != false || !current.delete()) return
+        current = current.parentFile ?: return
+    }
+}
+
 /** Unknown provider state is never treated as absence (especially after a revoked grant). */
 internal fun deleteOwnedMedia(context: Context, uri: Uri) {
     val resolver = context.contentResolver
@@ -88,7 +98,7 @@ internal fun deleteOutputCompanions(context: Context, record: ExportRecord) {
         runCatching {
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).canonicalFile
             val folder = File(downloads, listOf(record.folder, location.showFolder).filter(String::isNotBlank).joinToString("/")).canonicalFile
-            if (folder.toPath().startsWith(downloads.toPath()) && folder.isDirectory && folder.list()?.isEmpty() == true) folder.delete()
+            deleteEmptyDirectoriesUpTo(folder, downloads)
         }
     }
 }

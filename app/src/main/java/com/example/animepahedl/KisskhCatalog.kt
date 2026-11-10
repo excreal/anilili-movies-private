@@ -176,6 +176,17 @@ internal fun prioritizedKisskhSubtitles(tracks: List<MediaSubtitle>): List<Media
     tracks.filter { it.isDefault || it.language.equals("en", true) || it.language.startsWith("en-", true) }
         .ifEmpty { tracks.take(1) }
 
+/** Fresh sidecars replace stale cached captions for the same language, preserving other languages. */
+internal fun mergeKisskhSubtitleTracks(cached: List<MediaSubtitle>, fresh: List<MediaSubtitle>): List<MediaSubtitle> {
+    fun identity(track: MediaSubtitle): String = when {
+        track.language.isNotBlank() && !track.language.equals("und", true) -> "lang:${track.language.lowercase()}"
+        track.label.isNotBlank() -> "label:${track.label.trim().lowercase()}"
+        else -> "url:${track.url}"
+    }
+    val refreshed = fresh.mapTo(mutableSetOf(), ::identity)
+    return (fresh + cached.filterNot { identity(it) in refreshed }).distinctBy { it.url }
+}
+
 /** A broken or unavailable caption must not prevent video playback or discard other tracks. */
 internal suspend fun bestEffortKisskhSubtitleLocalization(
     tracks: List<MediaSubtitle>,
