@@ -182,8 +182,14 @@ internal fun mergeKisskhSubtitleTracks(cached: List<MediaSubtitle>, fresh: List<
         track.label.isNotBlank() -> "label:${track.label.trim().lowercase()}"
         else -> "url:${track.url}"
     }
-    val refreshed = fresh.mapTo(mutableSetOf(), ::identity)
-    return (fresh + cached.filterNot { identity(it) in refreshed }).distinctBy { it.url }
+    // Localization failures return the remote descriptor. It must not replace a saved sidecar.
+    val replacements = fresh.map { track ->
+        if (track.url.startsWith("file:", true)) track else cached.firstOrNull {
+            identity(it) == identity(track) && it.url.startsWith("file:", true)
+        } ?: track
+    }
+    val refreshed = replacements.mapTo(mutableSetOf(), ::identity)
+    return (replacements + cached.filterNot { identity(it) in refreshed }).distinctBy { it.url }
 }
 
 /** A broken or unavailable caption must not prevent video playback or discard other tracks. */

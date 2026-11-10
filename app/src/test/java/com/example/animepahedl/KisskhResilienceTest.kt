@@ -70,6 +70,9 @@ class KisskhResilienceTest {
             mergeKisskhSubtitleTracks(listOf(staleEnglish, cachedKorean), listOf(freshEnglish)))
         assertEquals(listOf(staleEnglish, cachedKorean),
             mergeKisskhSubtitleTracks(listOf(staleEnglish, cachedKorean), emptyList()))
+        assertEquals(listOf(staleEnglish, cachedKorean),
+            mergeKisskhSubtitleTracks(listOf(staleEnglish, cachedKorean),
+                listOf(MediaSubtitle("https://cdn.test/english.vtt", "English", "en"))))
     }
 
     private fun secureServer(): Pair<MockWebServer, OkHttpClient> {
