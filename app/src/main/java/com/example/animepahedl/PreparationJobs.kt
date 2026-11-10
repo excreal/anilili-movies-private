@@ -305,7 +305,7 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
         var record = initial
         while (true) {
             val start = android.os.SystemClock.elapsedRealtime()
-            val episodes = record.episodes.toList()
+            val episodes = chronologicalSiteEpisodes(record.episodes)
             val batchEpisodeIds = episodes.mapTo(mutableSetOf()) { it.id }
             var promotedNextBatch = false
             for ((index, episode) in episodes.withIndex()) {

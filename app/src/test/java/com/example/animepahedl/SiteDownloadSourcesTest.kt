@@ -22,6 +22,14 @@ class SiteDownloadSourcesTest {
         assertEquals("banner.jpg", series.copy(provider = SiteDownloadProvider.KISSKH).posterThumbnail())
     }
 
+    @Test fun selectedEpisodesPrepareInChronologicalOrderRegardlessOfSourceOrder() {
+        val episodes = listOf("10", "2", "1", "1.5").mapIndexed { index, number ->
+            SiteDownloadEpisode("id-$index", index + 1, "", "https://kisskh.do/show?ep=$number", number)
+        }
+
+        assertEquals(listOf("1", "1.5", "2", "10"), chronologicalSiteEpisodes(episodes).map { it.displayNumber })
+    }
+
     @Test fun linkRefreshIsBoundedPerEpisodeAndDoesNotRetryDirectUrls() {
         val guard = MediaLinkRefreshGuard()
         assertTrue(guard.shouldRefresh(SiteDownloadProvider.EROTICMV, "video-1"))

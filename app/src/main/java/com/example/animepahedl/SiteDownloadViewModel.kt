@@ -203,7 +203,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     fun downloadSelected() {
         val preview = series ?: return
         if (!ready || discarding || !preview.contentAvailable || selectionError != null || selectedEpisodes.isEmpty()) return
-        runPreparation(SiteDownloadPreparation(preview, selectedEpisodes.toList(), quality))
+        runPreparation(SiteDownloadPreparation(preview, chronologicalSiteEpisodes(selectedEpisodes), quality))
     }
     fun resumePreparation() { if (!discarding) viewModelScope.launch {
         try { PreparationJobs.resume(app, PreparationJobs.SITES) }
