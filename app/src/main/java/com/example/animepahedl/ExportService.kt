@@ -317,7 +317,6 @@ class ExportService : Service() {
             withContext(NonCancellable + Dispatchers.IO) {
                 if (!outputPublished && pendingOutput != null) {
                     runCatching { deleteOwnedMedia(this@ExportService, pendingOutput.uri) }.onSuccess {
-                        runCatching { deleteOutputCompanions(this@ExportService, record) }
                         Exports.all(this@ExportService)[id]?.let { Exports.put(this@ExportService, id, it.copy(pendingUri = null)) }
                     }
                 }
@@ -462,7 +461,6 @@ class ExportService : Service() {
             return uri to bytes
         } catch (e: Exception) {
             runCatching { deleteOwnedMedia(this@ExportService, uri) }.onSuccess {
-                runCatching { deleteOutputCompanions(this@ExportService, record) }
                 Exports.all(this)[id]?.let { Exports.put(this, id, it.copy(pendingUri = null)) }
             }
             throw e
