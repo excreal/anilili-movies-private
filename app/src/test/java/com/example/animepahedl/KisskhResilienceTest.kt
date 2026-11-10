@@ -40,7 +40,7 @@ class KisskhResilienceTest {
         assertEquals(listOf("9", "8", "1"), episodes.map { it.displayNumber })
     }
 
-    @Test fun downloadsShowEpisodesFromNewestToOldest() {
+    @Test fun downloadsShowEpisodesFromOldestToNewest() {
         val rows = listOf("1", "2", "3").map { episode ->
             DownloadRow("episode-$episode", "Show · Episode $episode", TransferState.COMPLETE, 100f,
                 showId = "show", showTitle = "Show", episodeNumber = episode)
@@ -48,7 +48,7 @@ class KisskhResilienceTest {
 
         val snapshot = downloadLibrarySnapshot(rows, "", "", DownloadLibrarySnapshot())
 
-        assertEquals(listOf("3", "2", "1"), snapshot.groups.single().second.map { it.episodeNumber })
+        assertEquals(listOf("1", "2", "3"), snapshot.groups.single().second.map { it.episodeNumber })
     }
 
     @Test fun offlinePlayerOmitsRemoteOrMissingSubtitleFiles() {
