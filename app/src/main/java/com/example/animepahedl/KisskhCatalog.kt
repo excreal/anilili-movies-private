@@ -93,17 +93,22 @@ internal class KisskhApi(
         val data = detail(id)
         val title = data.jsonString("title")
         val base = kisskhDetailUrl(id, title)
-        val episodes = data.jsonArrayOrEmpty("episodes").mapNotNull { it.takeIf { it.isJsonObject }?.asJsonObject }
-            .sortedBy { it.jsonString("number").toDoubleOrNull() ?: Double.MAX_VALUE }
-            .mapIndexed { index, episode ->
-                val episodeId = episode.jsonString("id").toLongOrNull()?.takeIf { it > 0 }
-                    ?: throw IOException("KissKH episode has no ID.")
-                val number = episode.jsonString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString()
-                    ?: (index + 1).toString()
-                val locator = base.newBuilder().addPathSegment("Episode-$number").addQueryParameter("ep", episodeId.toString()).build()
-                SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
-            }
+        val rawEpisodes = data.jsonArrayOrEmpty("episodes")
+        val episodes = rawEpisodes.mapIndexed { index, item ->
+            val episode = item.takeIf { it.isJsonObject }?.asJsonObject
+                ?: throw IOException("KissKH returned an incomplete episode list. Please try again.")
+            val episodeId = episode.jsonString("id").toLongOrNull()?.takeIf { it > 0 }
+                ?: throw IOException("KissKH returned an incomplete episode list. Please try again.")
+            val number = episode.jsonString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString()
+                ?: (index + 1).toString()
+            val locator = base.newBuilder().addPathSegment("Episode-$number").addQueryParameter("ep", episodeId.toString()).build()
+            SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
+        }
         require(episodes.isNotEmpty()) { "This drama has no available episodes yet." }
+        val advertisedCount = runCatching { data.get("episodesCount")?.takeIf { !it.isJsonNull }?.asString?.toIntOrNull() }.getOrNull()
+        if (advertisedCount != null && advertisedCount > 0 && episodes.size != advertisedCount) {
+            throw IOException("KissKH returned ${episodes.size} of $advertisedCount episodes. Please try again.")
+        }
         return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.jsonString("thumbnail")),
             base.toString(), episodes, description = data.jsonString("description"))
     }

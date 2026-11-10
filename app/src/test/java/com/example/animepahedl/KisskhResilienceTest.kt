@@ -185,6 +185,34 @@ class KisskhResilienceTest {
         server.enqueue(MockResponse().setBody("""{"Video":"https://cdn.test/one.m3u8"}"""))
     }
 
+    private fun enqueueDramaDetails(server: MockWebServer, body: String) {
+        server.enqueue(MockResponse().setBody(body))
+    }
+
+    @Test fun seriesKeepsServerEpisodeOrderAndNumbersAndAcceptsMatchingAdvertisedCount() = runBlocking {
+        val (server, client) = secureServer()
+        server.start()
+        try {
+            enqueueDramaDetails(server, """{"country":"South Korea","type":"TVSeries","title":"Show","episodesCount":3,"episodes":[{"id":456,"number":3},{"id":123,"number":1},{"id":789,"number":2}]}""")
+            val result = api(client).series("https://kisskh.do/Drama/Show?id=44".toHttpUrl())
+            assertEquals(listOf("456", "123", "789"), result.episodes.map { it.id })
+            assertEquals(listOf("3", "1", "2"), result.episodes.map { it.displayNumber })
+            assertEquals(3, result.episodes.size)
+        } finally { server.shutdown() }
+    }
+
+    @Test fun seriesRejectsServerListOnlyWhenItsCountDoesNotMatchAdvertisedCount() = runBlocking {
+        val (server, client) = secureServer()
+        server.start()
+        try {
+            enqueueDramaDetails(server, """{"country":"South Korea","type":"TVSeries","title":"Show","episodesCount":4,"episodes":[{"id":456,"number":3},{"id":123,"number":1},{"id":789,"number":2}]}""")
+            val error = assertThrows(java.io.IOException::class.java) {
+                runBlocking { api(client).series("https://kisskh.do/Drama/Show?id=44".toHttpUrl()) }
+            }
+            assertTrue(error.message.orEmpty().contains("3 of 4 episodes"))
+        } finally { server.shutdown() }
+    }
+
     @Test fun videoVariantsSkipStalledCaptionEndpoint() = runBlocking {
         val (server, client) = secureServer()
         server.start()
