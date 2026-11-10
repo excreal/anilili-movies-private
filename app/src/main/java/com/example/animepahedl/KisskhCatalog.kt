@@ -49,8 +49,8 @@ internal class KisskhApi(
                     require(data.size <= 5_000_000) { "KissKH response is too large." }
                     if (!response.isSuccessful) {
                         val body = runCatching { JsonParser.parseString(data.toString(Charsets.UTF_8)).asJsonObject }.getOrNull()
-                        val message = body?.dramaString("message").orEmpty()
-                        val country = body?.dramaString("country").orEmpty()
+                        val message = body?.jsonString("message").orEmpty()
+                        val country = body?.jsonString("country").orEmpty()
                         if (message.equals("Legal Issues!", ignoreCase = true)) {
                             throw KisskhRegionRestrictionException(country)
                         }
@@ -78,7 +78,7 @@ internal class KisskhApi(
         require(id > 0)
         synchronized(details) { details[id]?.takeIf { System.currentTimeMillis() - it.first < 900_000 }?.let { return it.second } }
         val result = json("https://kisskh.do/api/DramaList/Drama/$id?isq=false".toHttpUrl()).asJsonObject
-        require(result.dramaString("country") in setOf("South Korea", "Korea") && result.dramaString("type") == "TVSeries") {
+        require(result.jsonString("country") in setOf("South Korea", "Korea") && result.jsonString("type") == "TVSeries") {
             "KissKH is limited to Korean dramas."
         }
         synchronized(details) {
@@ -91,21 +91,21 @@ internal class KisskhApi(
         val id = url.queryParameter("id")?.toLongOrNull()?.takeIf { it > 0 }
             ?: throw IOException("Open a KissKH drama link with a series ID.")
         val data = detail(id)
-        val title = data.dramaString("title")
+        val title = data.jsonString("title")
         val base = kisskhDetailUrl(id, title)
-        val episodes = data.dramaArray("episodes").mapNotNull { it.takeIf { it.isJsonObject }?.asJsonObject }
-            .sortedBy { it.dramaString("number").toDoubleOrNull() ?: Double.MAX_VALUE }
+        val episodes = data.jsonArrayOrEmpty("episodes").mapNotNull { it.takeIf { it.isJsonObject }?.asJsonObject }
+            .sortedBy { it.jsonString("number").toDoubleOrNull() ?: Double.MAX_VALUE }
             .mapIndexed { index, episode ->
-                val episodeId = episode.dramaString("id").toLongOrNull()?.takeIf { it > 0 }
+                val episodeId = episode.jsonString("id").toLongOrNull()?.takeIf { it > 0 }
                     ?: throw IOException("KissKH episode has no ID.")
-                val number = episode.dramaString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString()
+                val number = episode.jsonString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString()
                     ?: (index + 1).toString()
                 val locator = base.newBuilder().addPathSegment("Episode-$number").addQueryParameter("ep", episodeId.toString()).build()
                 SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
             }
         require(episodes.isNotEmpty()) { "This drama has no available episodes yet." }
-        return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.dramaString("thumbnail")),
-            base.toString(), episodes, description = data.dramaString("description"))
+        return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.jsonString("thumbnail")),
+            base.toString(), episodes, description = data.jsonString("description"))
     }
     suspend fun subtitles(episodeId: String): List<MediaSubtitle> {
         val tracks = subtitleDescriptors(episodeId)
@@ -123,7 +123,7 @@ internal class KisskhApi(
     private suspend fun localizeSubtitles(tracks: List<MediaSubtitle>): List<MediaSubtitle> =
         bestEffortKisskhSubtitleLocalization(tracks) { ProviderSubtitles.localize(client, it) }
             .also { runCatching { ProviderSubtitles.trim() } }
-    suspend fun variants(url: HttpUrl, includeSubtitles: Boolean = true): List<DramaVariant> {
+    suspend fun variants(url: HttpUrl, includeSubtitles: Boolean = true): List<MediaVariant> {
         val show = series(url) // Also enforces the Korean-only rule for pasted episode links.
         val episodeId = url.queryParameter("ep") ?: show.episodes.first().id
         require(show.episodes.any { it.id == episodeId }) { "This episode does not belong to this Korean drama." }
@@ -131,7 +131,7 @@ internal class KisskhApi(
             .addQueryParameter("err", "false").addQueryParameter("ts", "null").addQueryParameter("time", "null")
             .addQueryParameter("kkey", kisskhRequestKey(episodeId)).build()
         val body = json(target).asJsonObject
-        val media = body.dramaString("Video").takeIf { it.isNotBlank() } ?: body.dramaString("Video_tmp")
+        val media = body.jsonString("Video").takeIf { it.isNotBlank() } ?: body.jsonString("Video_tmp")
         val parsed = kisskhPlayableVideoUrl(media)
         require(parsed != null) {
             "This KissKH episode has no playable video. Try another episode."
@@ -139,8 +139,8 @@ internal class KisskhApi(
         val captions = if (includeSubtitles) try { subtitles(episodeId) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { emptyList() } else emptyList()
-        return listOf(DramaVariant(media, subtitles = captions, headers = mapOf("Referer" to "https://kisskh.do/"),
-            mimeType = if (isDramaHls(parsed)) "application/x-mpegURL" else "video/mp4"))
+        return listOf(MediaVariant(media, subtitles = captions, headers = mapOf("Referer" to "https://kisskh.do/"),
+            mimeType = if (isHlsMedia(parsed)) "application/x-mpegURL" else "video/mp4"))
     }
 }
 
@@ -152,11 +152,11 @@ internal class KisskhRegionRestrictionException(country: String) : KisskhContent
 )
 
 internal fun kisskhPlayableVideoUrl(raw: String): HttpUrl? = runCatching { raw.toHttpUrl() }.getOrNull()
-    ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() && (isDramaHls(it) || isDramaFile(it)) }
+    ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() && (isHlsMedia(it) || isSupportedVideoFile(it)) }
 
 internal fun parseKisskhSubtitles(items: com.google.gson.JsonArray): List<MediaSubtitle> = items.mapNotNull { element ->
     val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-    val url = runCatching { item.dramaString("src").toHttpUrl() }.getOrNull()
+    val url = runCatching { item.jsonString("src").toHttpUrl() }.getOrNull()
         ?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() } ?: return@mapNotNull null
     val mimeType = when (url.encodedPath.substringAfterLast('.', "").lowercase()) {
         "srt" -> "application/x-subrip"
@@ -164,8 +164,8 @@ internal fun parseKisskhSubtitles(items: com.google.gson.JsonArray): List<MediaS
         "ass", "ssa" -> "text/x-ssa"
         else -> "text/plain"
     }
-    MediaSubtitle(url.toString(), item.dramaString("label"), item.dramaString("land").ifBlank { "und" }, mimeType,
-        isDefault = item.dramaString("default").equals("true", true))
+    MediaSubtitle(url.toString(), item.jsonString("label"), item.jsonString("land").ifBlank { "und" }, mimeType,
+        isDefault = item.jsonString("default").equals("true", true))
 }.distinctBy { it.url }.sortedByDescending { it.isDefault }
 
 internal fun prioritizedKisskhSubtitles(tracks: List<MediaSubtitle>): List<MediaSubtitle> =
@@ -223,10 +223,10 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
     private val indexFetch = Semaphore(4)
     private var index: List<CatalogItem>? = null
     private var indexTime = 0L
-    private fun items(data: JsonObject): List<CatalogItem> = data.dramaArray("data").mapNotNull {
+    private fun items(data: JsonObject): List<CatalogItem> = data.jsonArrayOrEmpty("data").mapNotNull {
         val row = it.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-        val id = row.dramaString("id").toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
-        CatalogItem(row.dramaString("title"), kisskhDetailUrl(id, row.dramaString("title")).toString(), kisskhArtworkUrl(row.dramaString("thumbnail")), wideArtwork = true)
+        val id = row.jsonString("id").toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+        CatalogItem(row.jsonString("title"), kisskhDetailUrl(id, row.jsonString("title")).toString(), kisskhArtworkUrl(row.jsonString("thumbnail")), wideArtwork = true)
     }
     override suspend fun home(): CatalogPage = catalogPage(1)
     override suspend fun search(query: String): CatalogPage = searchPage(query, 0)
@@ -239,7 +239,7 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
     }
     private suspend fun catalogPage(page: Int): CatalogPage = withContext(Dispatchers.IO) {
         val data = api.list(page)
-        CatalogPage(items(data), if (page.toLong() * 48 < data.dramaInt("totalCount"))
+        CatalogPage(items(data), if (page.toLong() * 48 < data.jsonInt("totalCount"))
             "https://kisskh.do/api/DramaList/List?page=${page + 1}&type=1&country=2" else null)
     }
     private suspend fun koreanIndex(): List<CatalogItem> = mutex.withLock {
@@ -251,7 +251,7 @@ internal class KisskhCatalog(cacheDirectory: File, cookies: ((String) -> String)
                 }
             }
             val first = api.list(1, 500)
-            val pages = (first.dramaInt("totalCount") + 499) / 500
+            val pages = (first.jsonInt("totalCount") + 499) / 500
             require(pages <= 50) { "KissKH search is temporarily unavailable. Browse its catalog instead." }
             val rest = coroutineScope { (2..pages).map { page -> async { indexFetch.withPermit { items(api.list(page, 500)) } } }.awaitAll().flatten() }
             val result = (items(first) + rest).distinctBy { it.url }

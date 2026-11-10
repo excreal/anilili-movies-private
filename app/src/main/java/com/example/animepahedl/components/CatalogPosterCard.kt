@@ -103,9 +103,9 @@ internal fun catalogArtworkRequest(context: android.content.Context, item: Catal
             .apply {
                 val detail = item.url.toHttpUrlOrNull()
                 val poster = item.poster.toHttpUrlOrNull()
-                // Dramatip explicitly marks CDN artwork no-referrer. Other sources receive
-                // only their own origin, never the old AnimePahe referral or private URL query.
-                if (detail != null && poster != null && detail.host != "dramatip.net" &&
+                // Artwork receives only a provider-origin referrer, never an unrelated app's
+                // referral or a private query string.
+                if (detail != null && poster != null &&
                     (poster.host == detail.host || detail.host == "eroticmv.com" || detail.host == "www.eroticmv.com" ||
                         detail.host == "kisskh.do" || detail.host == "www.kisskh.do")) {
                     addHeader("Referer", detail.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())

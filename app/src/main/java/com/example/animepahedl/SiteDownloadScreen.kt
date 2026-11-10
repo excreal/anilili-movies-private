@@ -286,8 +286,7 @@ private fun MetadataTermChips(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(unique, key = { it.url ?: it.id ?: it.name }, contentType = { "metadata-term" }) { term ->
                 val filterable = when (provider) {
-                    SiteDownloadProvider.KISS18 -> kind in setOf("tag", "category", "genre")
-                    SiteDownloadProvider.DRAMATIP, SiteDownloadProvider.NARTO, SiteDownloadProvider.EROTICMV -> term.url != null
+                    SiteDownloadProvider.EROTICMV -> term.url != null
                     else -> false
                 }
                 AssistChip(onClick = { if (filterable) onExplore(kind, term) }, enabled = filterable,

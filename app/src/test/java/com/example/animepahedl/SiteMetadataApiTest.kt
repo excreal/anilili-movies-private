@@ -1,12 +1,11 @@
 package com.example.animepahedl
 
 import com.example.animepahedl.metadata.*
-
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.*
 import org.junit.Test
-import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class SiteMetadataApiTest {
     @Test fun extractedMetadataFlowsIntoPersistableAppDetailModel() {
@@ -53,14 +52,6 @@ class SiteMetadataApiTest {
         assertFalse(payload.url.contains("token"))
     }
 
-    @Test fun dramatipCardsAndPaginationAreMapped() {
-        val html = """<html><body><main><h2>Popular</h2><section><a href="/series/demo"><img src="/poster.jpg" alt="Demo"></a></section></main><a rel="next" href="/category/popular/page/2">Next</a></body></html>"""
-        val page = parseDramatipMetadataPage(html, "https://dramatip.net/category/popular")
-        assertEquals("Demo", page.items.single().title)
-        assertEquals("https://dramatip.net/poster.jpg", page.items.single().images.single().url)
-        assertTrue(page.nextUrl!!.endsWith("/category/popular/page/2"))
-    }
-
     @Test fun eroticMvFeedPreservesRatingsDatesAndSeparatesCounts() {
         val xml = """<?xml version="1.0"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Feed</title><item><title>Film (2023)</title><link>https://eroticmv.com/film/</link><guid>https://eroticmv.com/?p=7</guid><pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;Description&lt;/p&gt;&lt;p&gt;Total: 2 Average: 4.5&lt;/p&gt;</content:encoded></item></channel></rss>"""
         val item = parseEroticMvMetadataFeed(xml, "https://eroticmv.com/feed/").items.single()
@@ -68,91 +59,6 @@ class SiteMetadataApiTest {
         assertEquals(2023, item.year)
         assertEquals("Mon, 01 Jan 2024 00:00:00 GMT", item.releaseDate)
         assertTrue(item.ratings.any { it.value == 4.5 })
-    }
-
-    @Test fun kiss18LiteralReaderAcceptsDataOnlyAndRejectsExecutableCode() {
-        val type = Class.forName("com.example.animepahedl.metadata.Kiss18Literal")
-        val constructor = type.getDeclaredConstructor(String::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
-        val instance = constructor.newInstance("{title:cleanText('Kiss18'),count:417,tags:['Drama','Mystery',],}", 0)
-        val parsed = type.getDeclaredMethod("read").apply { isAccessible = true }.invoke(instance) as JsonObject
-        assertEquals("Kiss18", parsed.get("title").asString)
-        assertEquals(417, parsed.get("count").asInt)
-        val bad = constructor.newInstance("globalThis.alert(1)", 0)
-        try { type.getDeclaredMethod("read").apply { isAccessible = true }.invoke(bad); fail("Executable JS must not be interpreted") }
-        catch (_: java.lang.reflect.InvocationTargetException) { }
-    }
-
-    @Test fun kiss18FetchedModuleFixturesRetainDeclaredGenreMembershipAndEnabledRows() {
-        // Sanitized data-only excerpts matching the public module shapes; no sessions or private data.
-        fun literal(source: String): JsonObject {
-            val type = Class.forName("com.example.animepahedl.metadata.Kiss18Literal")
-            val constructor = type.getDeclaredConstructor(String::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
-            return type.getDeclaredMethod("read").apply { isAccessible = true }
-                .invoke(constructor.newInstance(source, 0)) as JsonObject
-        }
-        val campaign = literal("""{collections:[{slug:'mafia-romance',title:'Mafia Romance Short Dramas',members:[{titleId:'chartdrama:shortpeak:bound-by-betrayal',reason:'Declared campaign member'}]},{slug:'werewolf-romance',title:'Werewolf Romance Short Dramas',members:[{titleId:'chartdrama:hdrama:a-mates-curse',reason:'Declared campaign member'}]}]}""")
-        assertEquals(listOf("mafia-romance", "werewolf-romance"), campaign.getAsJsonArray("collections").map { it.asJsonObject.get("slug").asString })
-        assertEquals("chartdrama:shortpeak:bound-by-betrayal", campaign.getAsJsonArray("collections")[0].asJsonObject.getAsJsonArray("members")[0].asJsonObject.get("titleId").asString)
-        val editorial = literal("""{sections:[{enabled:true,label:'Curated stories',titles:['public:id:one','public:id:two']},{enabled:false,label:'Hidden row',titles:['public:id:three']}]}""")
-        val enabled = editorial.getAsJsonArray("sections").map { it.asJsonObject }.filter { it.get("enabled").asBoolean }
-        assertEquals("Curated stories", enabled.single().get("label").asString)
-        assertEquals(2, enabled.single().getAsJsonArray("titles").size())
-    }
-
-    @Test fun kiss18SearchNormalizationTreatsApostropheVariantsEqually() {
-        val owner = Class.forName("com.example.animepahedl.metadata.Kiss18MetadataApiKt")
-        val normalize = owner.getDeclaredMethod("normalized", String::class.java).apply { isAccessible = true }
-        assertEquals(normalize.invoke(null, "The Don’s Bride"), normalize.invoke(null, "The Don's Bride"))
-        assertEquals("the dons bride", normalize.invoke(null, "The Don’s Bride"))
-    }
-
-    @Test fun kiss18WebsiteSearchFlagsAndContinuationRetainCompleteFilters() {
-        val supported = setOf("kind", "partial", "unavailable", "category", "tag", "genre")
-        val url = "https://kiss18.vip/search?kind=all&partial=1&unavailable=1&category=Test%20media&tag=CEO%20%26%20Revenge&genre=mafia-romance".toHttpUrl()
-        val filters = kiss18UrlFilterValues(url, supported)
-        assertEquals("all", filters["kind"])
-        assertEquals("1", filters["partial"])
-        assertTrue(kiss18FlagEnabled(filters["partial"]))
-        assertTrue(kiss18FlagEnabled(filters["unavailable"]))
-        assertEquals("Test media", filters["category"])
-        assertEquals("CEO & Revenge", filters["tag"])
-        assertEquals("mafia-romance", filters["genre"])
-        assertFalse(kiss18FlagEnabled("0"))
-        assertFalse(kiss18FlagEnabled("false"))
-
-        val next = kiss18ContinuationUrl("https://kiss18.vip/", 2, 48, "wolf’s bride", filters).toHttpUrl()
-        assertEquals("all", next.queryParameter("kind"))
-        assertEquals("1", next.queryParameter("partial"))
-        assertEquals("1", next.queryParameter("unavailable"))
-        assertEquals("Test media", next.queryParameter("category"))
-        assertEquals("CEO & Revenge", next.queryParameter("tag"))
-        assertEquals("mafia-romance", next.queryParameter("genre"))
-        assertEquals("wolf’s bride", next.queryParameter("q"))
-    }
-
-    @Test fun kiss18AvailabilityMatchesWebsiteCompletenessAndSearchRules() {
-        data class Fixture(val id: String, val listed: List<Int>, val playable: Set<Int>, val finalEpisode: Int? = null) {
-            val status get() = kiss18Availability(listed, playable, finalEpisode)
-        }
-        val fixtures = listOf(
-            Fixture("complete", listOf(1, 2, 3), setOf(1, 2, 3)),
-            Fixture("partial", listOf(1, 2, 3), setOf(1, 2)),
-            Fixture("episode-1-missing", listOf(1, 2, 3), setOf(2, 3)),
-            Fixture("gap", listOf(1, 2, 3, 4), setOf(1, 3, 4)),
-            Fixture("unavailable", listOf(1, 2), emptySet()),
-            Fixture("verified-finale-gap", listOf(1, 2, 3), setOf(1, 2, 3), finalEpisode = 4),
-        )
-        fun result(includePartial: Boolean = false, includeUnavailable: Boolean = false, searching: Boolean = false) =
-            fixtures.filter { kiss18AvailabilityMatches(it.status, includePartial, includeUnavailable, searching) }.map { it.id }.toSet()
-
-        assertEquals(setOf("complete"), result())
-        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap"), result(includePartial = true))
-        assertEquals(setOf("complete", "unavailable"), result(includeUnavailable = true))
-        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap", "unavailable"),
-            result(includePartial = true, includeUnavailable = true))
-        assertEquals(setOf("complete", "partial", "episode-1-missing", "gap", "verified-finale-gap"), result(searching = true))
-        assertFalse(kiss18Availability(listOf(1, 2, 3), setOf(1, 2, 3), 4).readyToStart)
-        assertFalse(kiss18Availability(listOf(1, 2, 3, 4), setOf(1, 3, 4), null).readyToStart)
     }
 
     @Test fun kisskhRowsKeepKoreanTitleFieldsWithoutInventingScores() {
@@ -166,24 +72,11 @@ class SiteMetadataApiTest {
         assertTrue(record.links.any { it.relation == "trailer" })
     }
 
-    @Test fun nartoSearchCardsPreserveTagsAndPublicAttributes() {
-        val method = NartoMetadataApi::class.java.getDeclaredMethod("jsonCard", com.google.gson.JsonElement::class.java, String::class.java).apply { isAccessible = true }
-        val record = method.invoke(NartoMetadataApi(), JsonParser.parseString("""{"book_id":"42","title":"Story","watch_url":"/detail/watch/story","description":"Summary","poster_url":"/cover.jpg","category_name":"Romance","tag_names":["CEO","Sweet"],"is_adult":false}"""), "https://edge.narto-drama.com/") as MetadataRecord
-        assertEquals(setOf("CEO", "Sweet"), record.tags.map { it.name }.toSet())
-        assertEquals("Romance", record.categories.single().name)
-        assertEquals("false", record.attributes["is_adult"])
-        assertTrue(record.payloads.single().json.contains("book_id"))
-    }
-
-    @Test fun eroticDescriptionCleanerRemovesBoilerplateAndPreservesSingleAndMultilineSynopsis() {
+    @Test fun eroticDescriptionCleanerRemovesBoilerplateAndPreservesSynopsis() {
         val single = cleanEroticDescription("Click to rate this post! [Total: 35 Average: 4.1] Also known as Malice, Malicious Description: A widow in Osaka meets a man.")
         assertEquals("A widow in Osaka meets a man.", single)
-        assertTrue(single.contains("Osaka"))
-
         val multiline = cleanEroticDescription("Click to rate this post! [Total: 35 Average: 4.1] Also known as Malice, Malicious Description: A widow in Osaka meets a man.\n\nThe second paragraph continues.")
         assertEquals("A widow in Osaka meets a man.\nThe second paragraph continues.", multiline)
-        assertTrue(multiline.contains("Osaka"))
-
         val synopsisMention = cleanEroticDescription("A widow in Osaka meets a man, also known as the traveler. Description: The story continues from there.")
         assertEquals("A widow in Osaka meets a man, also known as the traveler. Description: The story continues from there.", synopsisMention)
     }
@@ -196,9 +89,7 @@ class SiteMetadataApiTest {
             </div></main></body></html>""".trimIndent(),
             "https://eroticmv.com/film/"
         )
-
         assertEquals("A widow in Osaka meets a man.\nThe second paragraph continues.", details.record.description)
-        assertTrue(details.record.description!!.contains("Osaka"))
     }
 
     @Test fun persistedStringTermsAndLinkedTermObjectsBothDeserialize() {
@@ -215,12 +106,21 @@ class SiteMetadataApiTest {
     @Test fun similarTitleRoutesStayOnProviderTaxonomyPaths() {
         assertTrue(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "genre", "https://eroticmv.com/category/genre/romance/"))
         assertFalse(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "tag", "https://eroticmv.com/?redirect=https://example.com"))
-        assertFalse(isSafeMetadataFilterRoute(CatalogSource.KISSKH, "category", "https://dramatip.net/category/action/"))
+        assertFalse(isSafeMetadataFilterRoute(CatalogSource.KISSKH, "category", "https://eroticmv.com/category/action/"))
     }
 
     @Test fun durationParserHandlesClockAndIsoValues() {
         assertEquals(3723L, metadataDurationSeconds("PT1H2M3S"))
         assertEquals(3723L, metadataDurationSeconds("1:02:03"))
         assertNull(metadataDurationSeconds("unknown"))
+    }
+
+    @Test fun metadataFacadeDoesNotExposeShortDramaAdapters() {
+        val facade = SiteMetadataApis()
+        listOf(
+            "https://dramatip.net/series/story",
+            "https://kiss18.vip/title/story",
+            "https://narto-drama.com/detail/watch/story",
+        ).forEach { url -> assertTrue("$url must not expose Movie metadata", runCatching { facade.forUrl(url) }.isFailure) }
     }
 }

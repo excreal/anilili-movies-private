@@ -143,7 +143,7 @@ internal fun parseEroticMvMetadataDetails(html: String, url: String): MetadataDe
     }.distinctBy { it.url }
     val images = (primary.select(".post-thumbnail img, .video-player img, .player-wrapper img").flatMap { eroticImages(it, "video-poster") } +
         body?.select("img")?.flatMap { eroticImages(it, "content-image") }.orEmpty()).distinctBy { it.url to it.role }
-    val publicPlayer = dramaJsonAfter(html, Regex("(?:var\\s+)?vidorev_jav_js_object\\s*=\\s*"))?.takeIf { it.isJsonObject }?.asJsonObject
+    val publicPlayer = jsonAfterMarker(html, Regex("(?:var\\s+)?vidorev_jav_js_object\\s*=\\s*"))?.takeIf { it.isJsonObject }?.asJsonObject
     val player = JsonObject().apply { publicPlayer?.entrySet()?.forEach { (key, value) ->
         if (key.startsWith("single_video_") || key in setOf("single_media_sources", "single_media_subtitles", "vid_vtt_preview_vtt_file", "vid_vtt_preview_sprite_image", "vid_preview_image", "player_library")) add(key, value)
     } }
@@ -152,9 +152,9 @@ internal fun parseEroticMvMetadataDetails(html: String, url: String): MetadataDe
             track.attr("type").takeIf(String::isNotBlank) ?: mimeForSubtitle(track.attr("src")), track.hasAttr("default"), mapOf("kind" to track.attr("kind").ifBlank { "subtitles" })) }
     } + player.get("single_media_subtitles")?.takeIf { it.isJsonArray }?.asJsonArray?.mapNotNull { value ->
         val item = value.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-        absoluteErotic(url, item.dramaString("src"))?.let { MetadataSubtitle(it, item.dramaString("label"), item.dramaString("srclang").takeIf(String::isNotBlank),
-            format = item.dramaString("type").takeIf(String::isNotBlank) ?: mimeForSubtitle(item.dramaString("src")),
-            isDefault = item.dramaString("default").equals("true", true), attributes = mapOf("kind" to item.dramaString("kind").ifBlank { "subtitles" })) }
+        absoluteErotic(url, item.jsonString("src"))?.let { MetadataSubtitle(it, item.jsonString("label"), item.jsonString("srclang").takeIf(String::isNotBlank),
+            format = item.jsonString("type").takeIf(String::isNotBlank) ?: mimeForSubtitle(item.jsonString("src")),
+            isDefault = item.jsonString("default").equals("true", true), attributes = mapOf("kind" to item.jsonString("kind").ifBlank { "subtitles" })) }
     }.orEmpty()).distinctBy { it.url }
     val attributes = eroticStats(primary).toMutableMap()
     body?.select("p,li,tr,dl")?.forEach { row ->
@@ -259,7 +259,7 @@ private fun eroticCard(article: Element): MetadataRecord? {
 private fun eroticRatings(element: Element): List<MetadataRating> = buildList {
     element.select("[data-imdbdata]").forEach { node ->
         val obj = runCatching { JsonParser.parseString(node.attr("data-imdbdata")).asJsonObject }.getOrNull()
-        obj?.dramaString("rating")?.toDoubleOrNull()?.let { add(MetadataRating(it, 10.0, source = "IMDb", label = obj.dramaString("id"))) }
+        obj?.jsonString("rating")?.toDoubleOrNull()?.let { add(MetadataRating(it, 10.0, source = "IMDb", label = obj.jsonString("id"))) }
     }
     element.select(".yasr-rater-stars-vv[data-rating]").forEach { node ->
         val container = node.closest(".yasr-visitor-votes") ?: node.parent()
@@ -280,7 +280,7 @@ private fun eroticRatings(element: Element): List<MetadataRating> = buildList {
 private fun eroticImdb(element: Element) = buildMap {
     element.select("[data-title], [data-imdbdata]").forEach { node ->
         val id = node.attr("data-title").takeIf { it.matches(Regex("tt[0-9]+")) }
-            ?: runCatching { JsonParser.parseString(node.attr("data-imdbdata")).asJsonObject.dramaString("id") }.getOrNull()
+            ?: runCatching { JsonParser.parseString(node.attr("data-imdbdata")).asJsonObject.jsonString("id") }.getOrNull()
                 ?.takeIf { it.matches(Regex("tt[0-9]+")) }
         if (id != null) put("imdb", id)
     }

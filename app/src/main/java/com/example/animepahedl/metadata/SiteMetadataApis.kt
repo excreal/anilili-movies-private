@@ -10,20 +10,15 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 @Keep
 internal class SiteMetadataApis(private val cookieHeader: ((String) -> String)? = null) {
     private val adapters by lazy { mapOf(
-        MetadataSite.DRAMATIP to DramatipMetadataApi(cookieHeader),
-        MetadataSite.KISS18 to Kiss18MetadataApi(cookieHeader),
-        MetadataSite.NARTO to NartoMetadataApi(cookieHeader),
         MetadataSite.EROTICMV to EroticMvMetadataApi(cookieHeader),
         MetadataSite.KISSKH to KisskhMetadataApi(cookieHeader),
     ) }
     operator fun get(site: MetadataSite): SiteMetadataApi = adapters.getValue(site)
     fun forProvider(provider: SiteDownloadProvider): SiteMetadataApi = get(when (provider) {
-        SiteDownloadProvider.DRAMATIP -> MetadataSite.DRAMATIP
-        SiteDownloadProvider.KISS18 -> MetadataSite.KISS18
-        SiteDownloadProvider.NARTO -> MetadataSite.NARTO
         SiteDownloadProvider.EROTICMV -> MetadataSite.EROTICMV
         SiteDownloadProvider.KISSKH -> MetadataSite.KISSKH
         SiteDownloadProvider.DIRECT -> throw IllegalArgumentException("A direct media URL has no site catalogue. Use the media resolver.")
+        else -> throw IllegalArgumentException("${provider.contentLabel} metadata isn't included in this edition.")
     })
     fun forUrl(raw: String): SiteMetadataApi {
         val url = raw.toHttpUrl()

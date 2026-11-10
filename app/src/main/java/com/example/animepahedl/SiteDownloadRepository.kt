@@ -1,6 +1,5 @@
 package com.example.animepahedl
 
-import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
@@ -17,7 +16,10 @@ internal class SiteDownloadRepository(
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).callTimeout(90, TimeUnit.SECONDS).build(),
     private val userAgent: String = "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
     private val cookieHeader: ((String) -> String)? = null,
-    private val allowedProviders: Set<SiteDownloadProvider> = SiteDownloadProvider.entries.toSet()
+    // Keep the edition boundary safe even when a caller constructs the repository directly.
+    // Production entry points use appSiteDownloadRepository(), but tests and future call sites
+    // should not silently gain providers from another app edition.
+    private val allowedProviders: Set<SiteDownloadProvider> = MovieCatalogConfig.supportedProviders
 ) {
     private val providerSession = CatalogSessionCookies()
     private val kisskh = KisskhApi(client, cookieHeader)
@@ -34,38 +36,21 @@ internal class SiteDownloadRepository(
             }
             SiteDownloadProvider.EROTICMV -> {
                 val initial = fetch(url, cookie = cookie)
-                val (name, poster) = dramaMetadata(initial.text, initial.url)
-                val title = cleanDramaTitle(name, provider).ifBlank { "Video" }
+                val (name, poster) = parseProviderTitleAndPoster(initial.text, initial.url)
+                val title = cleanProviderTitle(name, provider).ifBlank { "Video" }
                 val variants = eroticVariants(initial, cookie)
                 SiteDownloadSeries(provider, "EROTICMV:${initial.url}", title, poster, initial.url.toString(),
                     listOf(SiteDownloadEpisode(initial.url.toString(), 1, title, initial.url.toString())), variantQualities(variants))
             }
-            else -> {
-                val (slug, _) = dramaRoute(url, provider)
-                val target = when (provider) {
-                    SiteDownloadProvider.DRAMATIP -> url.newBuilder().encodedPath("/series/$slug").query(null).build()
-                    SiteDownloadProvider.KISS18 -> url.newBuilder().encodedPath("/title/$slug").query(null).build()
-                    SiteDownloadProvider.NARTO -> url.newBuilder().encodedPath("/detail/watch/$slug").query(null).build()
-                    else -> error("unreachable")
-                }
-                val page = if (provider == SiteDownloadProvider.NARTO) nartoPage(target, cookie) else fetch(target, cookie = cookie)
-                parseDramaSeries(page.text, page.url, provider, slug)
-            }
+            else -> throw IOException("${provider.contentLabel} sources aren't included in this edition.")
         }
-    }
-
-    /** Optional UI hint. Playback and downloads always resolve the selected episode again. */
-    suspend fun discoverQualities(series: SiteDownloadSeries, episodeNumber: Int? = null, cookie: String = ""): List<String> = withContext(Dispatchers.IO) {
-        if (!series.provider.isShortDrama) return@withContext series.qualities
-        val episode = series.episodes.firstOrNull { it.number == episodeNumber } ?: series.episodes.firstOrNull() ?: return@withContext series.qualities
-        variantQualities(episodeVariants(episode.url.toHttpUrl(), series.provider, cookie))
     }
 
     suspend fun resolve(locator: String, quality: String = "Best", cookie: String = ""): ResolvedMedia = withContext(Dispatchers.IO) {
         val input = siteDownloadInput(locator)
         val provider = requireAllowedProvider(input)
         val variants = episodeVariants(input, provider, cookie)
-        val chosen = chooseDramaVariant(variants, quality)
+        val chosen = chooseMediaVariant(variants, quality)
         val headers = linkedMapOf("User-Agent" to userAgent)
         if (provider != SiteDownloadProvider.DIRECT) headers["Referer"] = input.toString()
         val mediaUrl = chosen.url.toHttpUrl()
@@ -87,7 +72,7 @@ internal class SiteDownloadRepository(
         }
     }
 
-    private fun variantQualities(variants: List<DramaVariant>): List<String> = listOf("Best") + variants.map { it.quality }.distinct()
+    private fun variantQualities(variants: List<MediaVariant>): List<String> = listOf("Best") + variants.map { it.quality }.distinct()
         .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
 
     private fun requireAllowedProvider(url: HttpUrl): SiteDownloadProvider {
@@ -97,56 +82,20 @@ internal class SiteDownloadRepository(
     }
 
     private suspend fun episodeVariants(url: HttpUrl, provider: SiteDownloadProvider, cookie: String,
-        includeSubtitles: Boolean = true): List<DramaVariant> = when (provider) {
+        includeSubtitles: Boolean = true): List<MediaVariant> = when (provider) {
         SiteDownloadProvider.KISSKH -> kisskh.variants(url.newBuilder().host("kisskh.do").build(), includeSubtitles)
-        SiteDownloadProvider.DIRECT -> listOf(DramaVariant(decodeEroticMedia(url.toString()), mimeType = if (isDramaHls(url)) "application/x-mpegURL" else if (url.encodedPath.endsWith(".webm", true) || url.queryParameter("mime_type") == "video/webm") "video/webm" else "video/mp4"))
-        SiteDownloadProvider.DRAMATIP -> {
-            val (slug, number) = dramaRoute(url, provider)
-            val target = url.newBuilder().encodedPath("/series/$slug/episode-${number ?: 1}").query(null).build()
-            val page = fetch(target, cookie = cookie)
-            validateEpisodePage(target, page.url, provider)
-            parseDramatipVariants(page.text)
-        }
-        SiteDownloadProvider.NARTO -> {
-            val (_, number) = dramaRoute(url, provider)
-            if (number == null) throw IOException("Select a Narto episode before downloading.")
-            val page = nartoPage(url, cookie)
-            validateEpisodePage(url, page.url, provider)
-            parseNartoVariants(page.text, page.url, number)
-        }
-        SiteDownloadProvider.KISS18 -> kissVariants(url, cookie)
+        SiteDownloadProvider.DIRECT -> listOf(MediaVariant(decodeEroticMedia(url.toString()), mimeType = if (isHlsMedia(url)) "application/x-mpegURL" else if (url.encodedPath.endsWith(".webm", true) || url.queryParameter("mime_type") == "video/webm") "video/webm" else "video/mp4"))
         SiteDownloadProvider.EROTICMV -> eroticVariants(fetch(url, cookie = cookie), cookie)
+        else -> throw IOException("${provider.contentLabel} sources aren't included in this edition.")
     }
 
-    private suspend fun kissVariants(url: HttpUrl, cookie: String): List<DramaVariant> {
-        val (slug, number) = dramaRoute(url, SiteDownloadProvider.KISS18)
-        if (number == null) throw IOException("Select a Kiss18 episode before downloading.")
-        val page = fetch(url, cookie = cookie)
-        validateEpisodePage(url, page.url, SiteDownloadProvider.KISS18)
-        parseKissPublicSource(page.text, page.url)?.let { source ->
-            val target = source.toHttpUrl()
-            if (isDramaHls(target) || isDramaFile(target)) return listOf(DramaVariant(source, mimeType = if (isDramaHls(target)) "application/x-mpegURL" else "video/mp4"))
-        }
-        val module = fetch(url.resolve("/catalogue-browse.mjs")!!, cookie = cookie, limit = 32 * 1024 * 1024)
-        val episode = kissCatalogueEpisode(module.text, slug, number)
-        val chunk = episode.dramaString("playbackChunk")
-        require(chunk.matches(Regex("[0-9a-fA-F]{64}"))) { "Invalid Kiss18 playback catalogue." }
-        val playback = JsonParser.parseString(fetch(url.resolve("/playback/$chunk.json")!!, cookie = cookie).text).asJsonObject.dramaObject("playback")
-        val variants = episode.dramaArray("sources").filter { it.isJsonObject }.mapNotNull { candidate ->
-            val id = candidate.asJsonObject.dramaString("id")
-            if (id.isBlank()) null else runCatching { kissPlaybackVariant(playback.dramaObject(id), episode, id, url) }.getOrNull()
-        }
-        if (variants.isEmpty()) throw IOException("Kiss18 returned no supported media for this episode.")
-        return variants
-    }
-
-    private suspend fun eroticVariants(initial: Page, cookie: String): List<DramaVariant> {
+    private suspend fun eroticVariants(initial: Page, cookie: String): List<MediaVariant> {
         var page = initial
         val seen = mutableSetOf<String>()
         repeat(3) {
             val raw = eroticVideoSource(page.text) ?: throw IOException("The player did not expose a supported video link.")
-            val target = dramaAbsolute(page.url, decodeEroticMedia(raw)).toHttpUrl()
-            if (isDramaHls(target) || isDramaFile(target)) return listOf(DramaVariant(target.toString(), mimeType = if (isDramaHls(target)) "application/x-mpegURL" else "video/mp4"))
+            val target = resolveProviderUrl(page.url, decodeEroticMedia(raw)).toHttpUrl()
+            if (isHlsMedia(target) || isSupportedVideoFile(target)) return listOf(MediaVariant(target.toString(), mimeType = if (isHlsMedia(target)) "application/x-mpegURL" else "video/mp4"))
             require(seen.add(target.toString())) { "Embedded player loop detected." }
             // An embedded host gets no provider cookies, including on redirect.
             page = fetch(target, referer = page.url.toString(), cookie = if (target.host == initial.url.host) cookie else "")
@@ -154,21 +103,7 @@ internal class SiteDownloadRepository(
         throw IOException("The embedded player is nested too deeply.")
     }
 
-    private suspend fun nartoPage(url: HttpUrl, cookie: String): Page {
-        fun english(target: HttpUrl) = target.newBuilder().removeAllQueryParameters("lang").addQueryParameter("lang", "en-US").fragment(null).build()
-        val page = fetch(english(url), cookie = cookie, allowChallenge = true)
-        if (!page.text.contains("Checking your browser", true)) return page
-        if (url.host == "edge.narto-drama.com") throw IOException("Narto requires browser verification.")
-        val edge = fetch(english(url.newBuilder().host("edge.narto-drama.com").build()), allowChallenge = true)
-        if (edge.text.contains("Checking your browser", true)) throw IOException("Narto requires browser verification.")
-        return edge
-    }
-
-    private fun validateEpisodePage(requested: HttpUrl, effective: HttpUrl, provider: SiteDownloadProvider) {
-        require(siteDownloadProvider(effective) == provider && dramaRoute(effective, provider) == dramaRoute(requested, provider)) { "The provider redirected to a different episode. Refresh the series and retry." }
-    }
-
-    private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024, allowChallenge: Boolean = false): Page {
+    private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024): Page {
         require('\r' !in cookie && '\n' !in cookie) { "Invalid Cookie header." }
         // Re-evaluate imported cookies per request; explicit headers stay on their original origin.
         // Provider pages carry session context, so never let an HTTPS page redirect downgrade
@@ -209,7 +144,7 @@ internal class SiteDownloadRepository(
                 output.toByteArray()
             }
             val text = bytes.toString(body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
-            if (!allowChallenge && SessionChecks.isChallenge(text, response.header("cf-mitigated"))) throw IOException("${url.host} requires browser verification or fresh cookies.")
+            if (SessionChecks.isChallenge(text, response.header("cf-mitigated"))) throw IOException("${url.host} requires browser verification or fresh cookies.")
             Page(text, response.request.url)
         }
     }
