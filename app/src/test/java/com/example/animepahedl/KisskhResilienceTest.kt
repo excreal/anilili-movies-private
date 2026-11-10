@@ -55,10 +55,13 @@ class KisskhResilienceTest {
         val remote = MediaSubtitle("https://cdn.test/caption.vtt", "Remote", "en")
         val missing = MediaSubtitle("file:///subtitles/missing.vtt", "Missing", "en")
         val available = MediaSubtitle("file:///subtitles/episode-one.vtt", "English", "en", "text/vtt")
+        val exported = MediaSubtitle("content://media/external/file/42", "Korean", "ko", "text/vtt")
 
-        val result = playableLocalSubtitleTracks(listOf(remote, missing, available)) { url -> url == available.url }
+        val result = playableLocalSubtitleTracks(listOf(remote, missing, available, exported)) { url ->
+            url == available.url || url == exported.url
+        }
 
-        assertEquals(listOf(available), result)
+        assertEquals(listOf(available, exported), result)
     }
 
     @Test fun freshOfflineKisskhCaptionsReplaceStaleLanguageAndKeepOtherCachedLanguages() {

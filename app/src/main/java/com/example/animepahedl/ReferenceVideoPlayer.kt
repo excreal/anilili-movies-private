@@ -144,10 +144,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                 if (offlineRows != null) {
                     val uri = savedRow?.savedUri?.takeIf(String::isNotBlank) ?: localRecord?.uri?.takeIf(String::isNotBlank)
                     check(!uri.isNullOrBlank()) { "This saved video is missing. Relink it in Downloads." }
-                    val storedTracks = localRecord?.media?.subtitles.orEmpty()
-                    val tracks = playableLocalSubtitleTracks(storedTracks) { url ->
-                        runCatching { java.io.File(url.toUri().path.orEmpty()).isFile }.getOrDefault(false)
-                    }
+                    val tracks = localSubtitleTracks(context, localRecord)
                     ReferenceResolved(current, listOf(StreamItem(uri, "mp4", savedRow?.quality ?: localRecord?.quality,
                         savedRow?.audioCode ?: localRecord?.audio, null, true, null, null)), tracks, true, true,
                         subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
@@ -159,18 +156,12 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
                         "This saved video is missing. Relink it in Downloads."
                     }
                     val matchingRecord = records.values.firstOrNull { it.uri == current.url }
-                    val storedTracks = matchingRecord?.media?.subtitles.orEmpty()
-                    val tracks = playableLocalSubtitleTracks(storedTracks) { url ->
-                        runCatching { java.io.File(url.toUri().path.orEmpty()).isFile }.getOrDefault(false)
-                    }
+                    val tracks = localSubtitleTracks(context, matchingRecord)
                     ReferenceResolved(current, listOf(StreamItem(current.url, "mp4", matchingRecord?.quality,
                         matchingRecord?.audio, null, true, null, null)), tracks, true, true,
                         subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
                 } else if (localRecord != null && current.id !in onlineOnly) {
-                    val storedTracks = localRecord.media?.subtitles.orEmpty()
-                    val tracks = playableLocalSubtitleTracks(storedTracks) { url ->
-                        runCatching { java.io.File(url.toUri().path.orEmpty()).isFile }.getOrDefault(false)
-                    }
+                    val tracks = localSubtitleTracks(context, localRecord)
                     ReferenceResolved(current, listOf(StreamItem(localRecord.uri, "mp4", localRecord.quality, localRecord.audio,
                         null, true, null, null)), tracks, true, true,
                         subtitleRefreshNeeded = series.provider == SiteDownloadProvider.KISSKH)
@@ -210,9 +201,7 @@ internal fun ReferenceVideoPlayer(series: SiteDownloadSeries, quality: String, o
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { emptyList() }
         val usableTracks = if (ready.local) {
-            playableLocalSubtitleTracks(tracks) { url ->
-                runCatching { java.io.File(url.toUri().path.orEmpty()).isFile }.getOrDefault(false)
-            }
+            playableLocalSubtitleTracks(tracks) { url -> localSubtitleUriExists(context, url) }
         } else tracks
         val refreshedSubtitles = mergeKisskhSubtitleTracks(ready.subtitles, usableTracks)
         if (refreshedSubtitles.isEmpty()) return@LaunchedEffect
@@ -313,7 +302,21 @@ internal fun playableLocalSubtitleTracks(
     tracks: List<MediaSubtitle>,
     fileExists: (String) -> Boolean,
 ): List<MediaSubtitle> = tracks.filter { track ->
-    track.url.startsWith("file:", ignoreCase = true) && fileExists(track.url)
+    (track.url.startsWith("file:", ignoreCase = true) || track.url.startsWith("content:", ignoreCase = true)) && fileExists(track.url)
+}
+
+private fun localSubtitleTracks(context: android.content.Context, record: ExportRecord?): List<MediaSubtitle> {
+    if (record == null) return emptyList()
+    val saved = playableLocalSubtitleTracks(record.media?.subtitles.orEmpty()) { url ->
+        localSubtitleUriExists(context, url)
+    }
+    val sidecars = findOutputSubtitleSidecars(context, record)
+        .filter { localSubtitleUriExists(context, it.url) }
+    // Prefer the exported sibling file, which the user can also inspect or replace in Downloads.
+    return (sidecars + saved).distinctBy { track ->
+        track.language.takeUnless { it.isBlank() || it.equals("und", true) }?.let { "lang:${it.lowercase()}" }
+            ?: "label:${track.label.trim().lowercase()}"
+    }
 }
 
 private fun AnililiError.asPlayerFailure(): AnililiFailure = this.asFailure()
