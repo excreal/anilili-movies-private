@@ -93,11 +93,10 @@ internal class KisskhApi(
         val data = detail(id)
         val title = data.jsonString("title")
         val base = kisskhDetailUrl(id, title)
-        // KissKH's summary count can lag its episode array. The actual returned entries, in their
-        // server order with their server numbers, are authoritative; don't invent or reject rows
-        // based on the separate episodesCount field.
+        // KissKH's summary count can lag its episode array. Keep all actual server entries and
+        // their exact numbers, but normalize the array chronologically for player, picker and queue.
         val rawEpisodes = data.jsonArrayOrEmpty("episodes")
-        val episodes = rawEpisodes.mapIndexed { index, item ->
+        val episodes = chronologicalSiteEpisodes(rawEpisodes.mapIndexed { index, item ->
             val episode = item.takeIf { it.isJsonObject }?.asJsonObject
                 ?: throw IOException("KissKH returned an incomplete episode list. Please try again.")
             val episodeId = episode.jsonString("id").toLongOrNull()?.takeIf { it > 0 }
@@ -105,8 +104,8 @@ internal class KisskhApi(
             val number = episode.jsonString("number").toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString()
                 ?: (index + 1).toString()
             val locator = base.newBuilder().addPathSegment("Episode-$number").addQueryParameter("ep", episodeId.toString()).build()
-            SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
-        }
+            SiteDownloadEpisode(episodeId.toString(), number.toBigDecimalOrNull()?.toInt() ?: index + 1, "", locator.toString(), number)
+        })
         require(episodes.isNotEmpty()) { "This drama has no available episodes yet." }
         return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.jsonString("thumbnail")),
             base.toString(), episodes, description = data.jsonString("description"))

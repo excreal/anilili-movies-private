@@ -5,6 +5,13 @@ internal data class DownloadLocation(val showFolder: String, val fileName: Strin
 internal fun safeFileName(value: String): String = value
     .replace(Regex("[\\p{Cntrl}\\\\/:*?\"<>|]"), "_").trim().trimEnd('.').take(120).ifBlank { "Anime" }
 
+internal fun subtitleSidecarName(mediaFileName: String, language: String, index: Int): String {
+    val stem = mediaFileName.substringBeforeLast('.', mediaFileName)
+    val tag = language.trim().takeIf { it.matches(Regex("(?i)[a-z]{2,3}(?:[-_][a-z0-9]{2,8})*")) }
+        ?.lowercase()?.replace('_', '-') ?: "track-${index + 1}"
+    return "$stem.$tag.vtt"
+}
+
 internal fun downloadLocation(show: String, episode: String?, quality: String?, extension: String, audio: String? = null): DownloadLocation {
     val name = safeFileName(show)
     val number = episode?.trim()?.takeIf { it.isNotEmpty() }?.let { value ->

@@ -29,7 +29,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class KisskhResilienceTest {
-    @Test fun downloadEpisodePickerShowsReverseOrderWithoutChangingEpisodeRecords() {
+    @Test fun downloadEpisodePickerShowsChronologicalOrderWithoutChangingEpisodeRecords() {
         val episodes = listOf(
             SiteDownloadEpisode("9", 1, "", "https://kisskh.do/Drama/Show?ep=9", "9"),
             SiteDownloadEpisode("8", 2, "", "https://kisskh.do/Drama/Show?ep=8", "8"),
@@ -232,26 +232,26 @@ class KisskhResilienceTest {
         server.enqueue(MockResponse().setBody(body))
     }
 
-    @Test fun seriesKeepsServerEpisodeOrderAndNumbersAndAcceptsMatchingAdvertisedCount() = runBlocking {
+    @Test fun seriesOrdersServerEpisodesChronologicallyAndKeepsTheirNumbers() = runBlocking {
         val (server, client) = secureServer()
         server.start()
         try {
             enqueueDramaDetails(server, """{"country":"South Korea","type":"TVSeries","title":"Show","episodesCount":3,"episodes":[{"id":456,"number":3},{"id":123,"number":1},{"id":789,"number":2}]}""")
             val result = api(client).series("https://kisskh.do/Drama/Show?id=44".toHttpUrl())
-            assertEquals(listOf("456", "123", "789"), result.episodes.map { it.id })
-            assertEquals(listOf("3", "1", "2"), result.episodes.map { it.displayNumber })
+            assertEquals(listOf("123", "789", "456"), result.episodes.map { it.id })
+            assertEquals(listOf("1", "2", "3"), result.episodes.map { it.displayNumber })
             assertEquals(3, result.episodes.size)
         } finally { server.shutdown() }
     }
 
-    @Test fun seriesUsesServerEpisodeListAsIsWhenAdvertisedCountDiffers() = runBlocking {
+    @Test fun seriesChronologyDoesNotDependOnAdvertisedEpisodeCount() = runBlocking {
         val (server, client) = secureServer()
         server.start()
         try {
             enqueueDramaDetails(server, """{"country":"South Korea","type":"TVSeries","title":"Show","episodesCount":4,"episodes":[{"id":456,"number":3},{"id":123,"number":1},{"id":789,"number":2}]}""")
             val result = api(client).series("https://kisskh.do/Drama/Show?id=44".toHttpUrl())
-            assertEquals(listOf("456", "123", "789"), result.episodes.map { it.id })
-            assertEquals(listOf("3", "1", "2"), result.episodes.map { it.displayNumber })
+            assertEquals(listOf("123", "789", "456"), result.episodes.map { it.id })
+            assertEquals(listOf("1", "2", "3"), result.episodes.map { it.displayNumber })
             assertEquals(3, result.episodes.size)
         } finally { server.shutdown() }
     }

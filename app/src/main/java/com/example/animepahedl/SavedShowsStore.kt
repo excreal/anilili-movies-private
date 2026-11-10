@@ -19,6 +19,7 @@ internal class SavedShowsStore(context: Context) {
     }
     fun all(): List<SiteDownloadSeries> = preferences.all.entries.filter { it.key.startsWith("show:") }
         .mapNotNull { runCatching { gson.fromJson(it.value as String, SiteDownloadSeries::class.java) }.getOrNull() }
+        .map { series -> if (series.provider == SiteDownloadProvider.KISSKH) series.copy(episodes = chronologicalSiteEpisodes(series.episodes)) else series }
         .sortedBy { it.title.lowercase() }
     companion object { val changes = MutableStateFlow(0L) }
 }

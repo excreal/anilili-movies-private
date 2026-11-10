@@ -202,6 +202,20 @@ class ExportService : Service() {
             val tree = record.tree.takeIf { hasOutputFolderAccess(this, it) } ?: AppSettings(this).outputTree
             if (!hasOutputFolderAccess(this, tree)) throw OutputFolderAccessRequired()
             record = record.copy(tree = tree)
+            // Older queued jobs may have resolved video before captions were available.
+            // Recover captions for this exact episode before publishing its saved files.
+            val identity = record.identity
+            if (identity?.anime?.session?.startsWith("sites:KISSKH:") == true) {
+                val fresh = try {
+                    KisskhApi(cookies = SiteDownloadCookieStore(this)::headerFor).subtitles(identity.episode.session)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { emptyList() }
+                if (fresh.isNotEmpty()) {
+                    val media = record.media
+                    if (media != null) record = record.copy(media = media.copy(
+                        subtitles = mergeKisskhSubtitleTracks(media.subtitles.orEmpty(), fresh)))
+                }
+            }
             record.pendingUri?.takeIf { it.isNotEmpty() }?.let { old ->
                 withContext(Dispatchers.IO) { deleteOwnedMedia(this@ExportService, (old).toUri()) }
                 record = record.copy(pendingUri = null)
@@ -273,6 +287,7 @@ class ExportService : Service() {
                     verifyCopy(this@ExportService, destination.uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
                 } }
                 if (!Exports.all(this).containsKey(id) || Exports.deleting(id)) throw CancellationException("Download was removed")
+                publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
                 withContext(Dispatchers.IO) { destination.publish() }
                 Exports.put(this, id, record.copy(uri = destination.uri.toString(), bytes = bytes, pendingUri = null))
                 DownloadStore.flush()
@@ -282,6 +297,7 @@ class ExportService : Service() {
             }
         } catch (found: ExistingVideoFound) {
             if (Exports.all(this).containsKey(id) && !Exports.deleting(id)) {
+                publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
                 Exports.put(this, id, record.copy(uri = found.video.uri.toString(), bytes = found.video.bytes, pendingUri = null, error = ""))
                 DownloadStore.flush()
                 if (id.startsWith("direct:")) withContext(Dispatchers.IO) {
@@ -301,6 +317,7 @@ class ExportService : Service() {
             withContext(NonCancellable + Dispatchers.IO) {
                 if (!outputPublished && pendingOutput != null) {
                     runCatching { deleteOwnedMedia(this@ExportService, pendingOutput.uri) }.onSuccess {
+                        runCatching { deleteOutputCompanions(this@ExportService, record) }
                         Exports.all(this@ExportService)[id]?.let { Exports.put(this@ExportService, id, it.copy(pendingUri = null)) }
                     }
                 }
@@ -440,13 +457,92 @@ class ExportService : Service() {
             require(bytes > 0) { "Output is empty" }
             Exports.setProgress(id, ExportProgress("Checking saved video", 0f))
             verifyCopy(this@ExportService, uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
+            publishSubtitleSidecars(record, checkActive)
             if (tree == null) require(contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) > 0) { "Output publication failed" }
             return uri to bytes
         } catch (e: Exception) {
             runCatching { deleteOwnedMedia(this@ExportService, uri) }.onSuccess {
+                runCatching { deleteOutputCompanions(this@ExportService, record) }
                 Exports.all(this)[id]?.let { Exports.put(this, id, it.copy(pendingUri = null)) }
             }
             throw e
+        }
+    }
+
+    /** Export normalized, app-owned caption files next to the completed video. */
+    private suspend fun publishSubtitleSidecars(record: ExportRecord, checkActive: () -> Unit) = withContext(Dispatchers.IO) {
+        val location = record.outputLocation("mp4")
+        val tracks = record.media?.subtitles.orEmpty()
+        if (tracks.isEmpty()) return@withContext
+        val tree = record.tree.takeIf(String::isNotBlank)?.let(Uri::parse)
+        val usedNames = mutableSetOf<String>()
+        val created = mutableListOf<Uri>()
+        try {
+            tracks.forEachIndexed { index, track ->
+                currentCoroutineContext().ensureActive()
+                val source = ProviderSubtitles.managedFile(track) ?: return@forEachIndexed
+                var name = subtitleSidecarName(location.fileName, track.language, index)
+                if (!usedNames.add(name.lowercase())) {
+                    name = subtitleSidecarName(location.fileName, "", index)
+                    if (!usedNames.add(name.lowercase())) return@forEachIndexed
+                }
+                var output: Uri? = null
+                try {
+                    checkActive()
+                    val sidecar = if (tree != null) {
+                        val parent = outputParent(tree, location)
+                        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(parent))
+                        val exists = contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+                            ?.use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.any { it.equals(name, true) } } == true
+                        if (exists) return@forEachIndexed
+                        DocumentsContract.createDocument(contentResolver, parent, "text/vtt", name)
+                            ?: throw java.io.IOException("Could not create subtitle sidecar.")
+                    } else {
+                        val relativePath = listOf(Environment.DIRECTORY_DOWNLOADS, record.folder, location.showFolder)
+                            .filter(String::isNotBlank).joinToString("/").trimEnd('/') + "/"
+                        val files = MediaStore.Files.getContentUri("external")
+                        val exists = contentResolver.query(files, arrayOf(MediaStore.MediaColumns._ID),
+                            "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+                            arrayOf(relativePath, name), null)?.use { it.moveToFirst() } == true
+                        if (exists) return@forEachIndexed
+                        contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                            put(MediaStore.MediaColumns.MIME_TYPE, "text/vtt")
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                            put(MediaStore.MediaColumns.IS_PENDING, 1)
+                        }) ?: throw java.io.IOException("Could not create subtitle sidecar.")
+                    }
+                    output = sidecar
+                    created += sidecar
+                    source.inputStream().use { input ->
+                        contentResolver.openOutputStream(sidecar, "w")?.use { target ->
+                            val buffer = ByteArray(16 * 1024)
+                            var copied = 0L
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                copied += count
+                                require(copied <= 4_000_000L) { "Subtitle sidecar exceeds the size limit." }
+                                checkActive()
+                                target.write(buffer, 0, count)
+                            }
+                            require(copied > 0) { "Subtitle sidecar is empty." }
+                        } ?: throw java.io.IOException("Could not write subtitle sidecar.")
+                    }
+                    if (tree == null) require(contentResolver.update(sidecar, ContentValues().apply {
+                        put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    }, null, null) > 0) { "Could not publish subtitle sidecar." }
+                    DebugTrace.event("subtitle_sidecar_exported", "language" to track.language.take(20), "bytes" to source.length())
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    output?.let { runCatching { deleteOwnedMedia(this@ExportService, it) }; created.remove(it) }
+                    DebugTrace.event("subtitle_sidecar_export_failed", "language" to track.language.take(20), "reason" to (error.message ?: "unknown").take(120))
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            created.asReversed().forEach { runCatching { deleteOwnedMedia(this@ExportService, it) } }
+            throw cancelled
         }
     }
     companion object {

@@ -16,7 +16,11 @@ internal fun isOutputSubtitleSidecar(candidate: String, mediaFileName: String): 
     val mediaStem = mediaFileName.substringBeforeLast('.', mediaFileName)
     val candidateExtension = candidate.substringAfterLast('.', "").lowercase()
     val candidateStem = candidate.substringBeforeLast('.', candidate)
-    return candidateExtension in outputSubtitleExtensions && candidateStem.equals(mediaStem, ignoreCase = true)
+    val sidecarTag = candidateStem.takeIf { it.startsWith("$mediaStem.", ignoreCase = true) }
+        ?.substring(mediaStem.length + 1)
+    val matchingStem = candidateStem.equals(mediaStem, ignoreCase = true) ||
+        sidecarTag?.matches(Regex("(?i)(?:[a-z]{2,3}(?:[-_][a-z0-9]{2,8})*|track-\\d+)")) == true
+    return candidateExtension in outputSubtitleExtensions && matchingStem
 }
 
 /** Remove empty download directories from [start] upward, stopping before [boundary]. */
@@ -40,7 +44,7 @@ internal fun deleteOwnedMedia(context: Context, uri: Uri) {
     if (!deleted && !absent()) throw IOException("The storage provider refused deletion. Restore folder access and tap Delete again.")
 }
 
-/** Delete only same-basename subtitle sidecars and an empty per-show directory. */
+/** Delete only subtitle sidecars for the media basename and an empty per-show directory. */
 internal fun deleteOutputCompanions(context: Context, record: ExportRecord) {
     val location = record.outputLocation("mp4")
     val tree = record.tree.takeIf(String::isNotBlank)?.let(Uri::parse)

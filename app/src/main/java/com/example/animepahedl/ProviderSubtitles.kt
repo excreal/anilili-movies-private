@@ -33,6 +33,14 @@ internal object ProviderSubtitles {
         active.removeAll(tracks.map { it.url }.toSet())
         deleteUnreferenced("", tracks)
     }
+    /** Only these app-owned normalized files may be exported as user-visible sidecars. */
+    fun managedFile(track: MediaSubtitle): File? {
+        if (!::context.isInitialized) return null
+        val uri = Uri.parse(track.url)
+        if (uri.scheme != "file") return null
+        val directory = File(context.filesDir, "provider-subtitles").canonicalFile
+        return File(uri.path.orEmpty()).canonicalFile.takeIf { it.parentFile == directory && it.extension == "vtt" && it.isFile && it.length() > 0L }
+    }
     /** Remove app-local subtitle copies when their last downloaded-video reference is deleted. */
     fun deleteUnreferenced(downloadId: String, tracks: List<MediaSubtitle>) {
         if (!::context.isInitialized || tracks.isEmpty()) return
