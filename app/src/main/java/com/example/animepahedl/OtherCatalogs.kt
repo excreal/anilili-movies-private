@@ -1,7 +1,5 @@
 package com.example.animepahedl
 
-import com.google.gson.JsonElement
-import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
@@ -16,53 +14,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-
-/** Narto's public English catalogue; the edge origin serves the same site without its JS gate. */
-internal class NartoCatalog(cookieHeader: ((String) -> String)? = null) : SiteCatalog {
-    private val http = OtherCatalogHttp(setOf("narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com"), cookieHeader)
-    private val origin = "https://edge.narto-drama.com/".toHttpUrl()
-    override suspend fun home() = page(origin.newBuilder().addQueryParameter("lang", "en-US").build().toString())
-    override suspend fun search(query: String) = page(origin.newBuilder().encodedPath("/search")
-        .addQueryParameter("lang", "en-US").addQueryParameter("q", query.trim()).build().toString())
-    override suspend fun page(url: String): CatalogPage = withContext(Dispatchers.IO) {
-        val doc = http.get(url)
-        val items = linkedMapOf<String, CatalogItem>()
-        // The server embeds the exact rendered catalogue as schema.org ItemList data.
-        fun visit(node: JsonElement) {
-            when {
-                node.isJsonArray -> node.asJsonArray.forEach(::visit)
-                node.isJsonObject -> {
-                    val obj = node.asJsonObject
-                    if (obj.get("@type")?.takeIf { it.isJsonPrimitive }?.asString == "ListItem") {
-                        val target = obj.get("url")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
-                        val title = obj.get("name")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
-                        val image = obj.get("image")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
-                        val parsed = runCatching { target.toHttpUrl() }.getOrNull()
-                        if (parsed != null && http.accepts(parsed) && parsed.encodedPath.startsWith("/detail/watch/") && title.isNotBlank())
-                            items.putIfAbsent(parsed.encodedPath, CatalogItem(title, parsed.toString(), image))
-                    }
-                    obj.entrySet().forEach { visit(it.value) }
-                }
-            }
-        }
-        doc.select("script[type=application/ld+json]").forEach { script ->
-            runCatching { JsonParser.parseString(script.data()) }.getOrNull()?.let(::visit)
-        }
-        if (items.isEmpty()) doc.select("a[href*=/detail/watch/]").forEach { link ->
-            val target = runCatching { link.absUrl("href").toHttpUrl() }.getOrNull() ?: return@forEach
-            if (!http.accepts(target)) return@forEach
-            val image = link.selectFirst("img")
-            val title = image?.attr("alt").orEmpty().ifBlank { link.attr("aria-label").removePrefix("Open ") }
-                .ifBlank { link.selectFirst("h2,h3,h4")?.text().orEmpty() }
-            if (title.isNotBlank() && title != "Watch Now") items.putIfAbsent(target.encodedPath,
-                CatalogItem(title, target.toString(), image?.let { catalogImage(it, doc.location()) }.orEmpty()))
-        }
-        val next = doc.select("a.pager-link, a[rel=next]").firstOrNull {
-            it.text().trim().equals("Next", true) || it.attr("rel") == "next"
-        }?.absUrl("href")?.takeIf { runCatching { http.accepts(it.toHttpUrl()) }.getOrDefault(false) }
-        CatalogPage(items.values.toList(), next)
-    }
-}
 
 /** WordPress catalogue adapter. HTTP/challenge failures remain errors instead of empty results. */
 internal class EroticMvCatalog(cookieHeader: ((String) -> String)? = null) : SiteCatalog {

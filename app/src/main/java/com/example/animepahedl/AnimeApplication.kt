@@ -15,12 +15,6 @@ class AnimeApplication : Application(), coil.ImageLoaderFactory {
             .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val request = chain.request()
-                val fallback = dramatipPublicPosterUrl(request.url)
-                val chosen = if (fallback != null) request.newBuilder().url(fallback).build() else request
-                chain.proceed(chosen)
-            }
             .addNetworkInterceptor { chain ->
                 val request = chain.request()
                 val builder = request.newBuilder().removeHeader("Cookie")
