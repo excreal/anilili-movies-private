@@ -93,6 +93,9 @@ internal class KisskhApi(
         val data = detail(id)
         val title = data.jsonString("title")
         val base = kisskhDetailUrl(id, title)
+        // KissKH's summary count can lag its episode array. The actual returned entries, in their
+        // server order with their server numbers, are authoritative; don't invent or reject rows
+        // based on the separate episodesCount field.
         val rawEpisodes = data.jsonArrayOrEmpty("episodes")
         val episodes = rawEpisodes.mapIndexed { index, item ->
             val episode = item.takeIf { it.isJsonObject }?.asJsonObject
@@ -105,10 +108,6 @@ internal class KisskhApi(
             SiteDownloadEpisode(episodeId.toString(), index + 1, "", locator.toString(), number)
         }
         require(episodes.isNotEmpty()) { "This drama has no available episodes yet." }
-        val advertisedCount = runCatching { data.get("episodesCount")?.takeIf { !it.isJsonNull }?.asString?.toIntOrNull() }.getOrNull()
-        if (advertisedCount != null && advertisedCount > 0 && episodes.size != advertisedCount) {
-            throw IOException("KissKH returned ${episodes.size} of $advertisedCount episodes. Please try again.")
-        }
         return SiteDownloadSeries(SiteDownloadProvider.KISSKH, id.toString(), title, kisskhArtworkUrl(data.jsonString("thumbnail")),
             base.toString(), episodes, description = data.jsonString("description"))
     }
