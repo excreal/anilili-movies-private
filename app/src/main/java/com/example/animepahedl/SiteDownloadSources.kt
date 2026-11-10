@@ -21,6 +21,7 @@ internal val SiteDownloadProvider.contentLabel get() = when (this) {
 }
 internal data class SiteDownloadEpisode(val id: String, val number: Int, val title: String, val url: String, val numberLabel: String? = null)
 internal val SiteDownloadEpisode.displayNumber get() = numberLabel ?: number.toString()
+internal fun downloadEpisodeDisplayOrder(episodes: List<SiteDownloadEpisode>): List<SiteDownloadEpisode> = episodes.asReversed()
 internal data class SiteShowImage(val url: String, val role: String, val width: Int? = null, val height: Int? = null, val caption: String? = null)
 internal data class SiteShowTerm(val name: String, val id: String? = null, val url: String? = null)
 internal data class SiteShowRating(val value: Double? = null, val scale: Double? = null, val votes: Long? = null, val source: String? = null, val label: String? = null)

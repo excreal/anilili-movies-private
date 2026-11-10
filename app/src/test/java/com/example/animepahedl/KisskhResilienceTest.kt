@@ -29,6 +29,38 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class KisskhResilienceTest {
+    @Test fun downloadEpisodePickerShowsReverseOrderWithoutChangingEpisodeRecords() {
+        val episodes = listOf(
+            SiteDownloadEpisode("9", 1, "", "https://kisskh.do/Drama/Show?ep=9", "9"),
+            SiteDownloadEpisode("8", 2, "", "https://kisskh.do/Drama/Show?ep=8", "8"),
+            SiteDownloadEpisode("1", 9, "", "https://kisskh.do/Drama/Show?ep=1", "1"),
+        )
+
+        assertEquals(listOf("1", "8", "9"), downloadEpisodeDisplayOrder(episodes).map { it.displayNumber })
+        assertEquals(listOf("9", "8", "1"), episodes.map { it.displayNumber })
+    }
+
+    @Test fun downloadsShowEpisodesFromNewestToOldest() {
+        val rows = listOf("1", "2", "3").map { episode ->
+            DownloadRow("episode-$episode", "Show · Episode $episode", TransferState.COMPLETE, 100f,
+                showId = "show", showTitle = "Show", episodeNumber = episode)
+        }
+
+        val snapshot = downloadLibrarySnapshot(rows, "", "", DownloadLibrarySnapshot())
+
+        assertEquals(listOf("3", "2", "1"), snapshot.groups.single().second.map { it.episodeNumber })
+    }
+
+    @Test fun offlinePlayerOmitsRemoteOrMissingSubtitleFiles() {
+        val remote = MediaSubtitle("https://cdn.test/caption.vtt", "Remote", "en")
+        val missing = MediaSubtitle("file:///subtitles/missing.vtt", "Missing", "en")
+        val available = MediaSubtitle("file:///subtitles/episode-one.vtt", "English", "en", "text/vtt")
+
+        val result = playableLocalSubtitleTracks(listOf(remote, missing, available)) { url -> url == available.url }
+
+        assertEquals(listOf(available), result)
+    }
+
     private fun secureServer(): Pair<MockWebServer, OkHttpClient> {
         val certificate = HeldCertificate.Builder().addSubjectAlternativeName("kisskh.do")
             .addSubjectAlternativeName("www.kisskh.do").build()

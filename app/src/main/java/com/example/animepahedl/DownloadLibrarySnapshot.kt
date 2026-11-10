@@ -32,7 +32,7 @@ internal fun downloadLibrarySnapshot(rows: List<DownloadRow>, query: String, sor
         .map { entry ->
             val sorted = entry.value.sortedWith(compareBy<DownloadRow> {
                 it.episodeNumber.toDoubleOrNull() ?: it.title.split(" · ").getOrNull(1)?.removePrefix("Episode ")?.toDoubleOrNull() ?: Double.MAX_VALUE
-            }.thenBy { it.title })
+            }.thenBy { it.title }).asReversed()
             entry.key to (oldGroups[entry.key]?.takeIf { it == sorted } ?: sorted)
         }
     return DownloadLibrarySnapshot(rows, visible, groups, rows.count { it.complete },

@@ -306,6 +306,7 @@ private fun metadataDurationLabel(seconds: Long): String = when {
 private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadViewModel, downloads: DownloaderViewModel,
     images: ImageLoader, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     val selected = remember(model.selectedEpisodes) { model.selectedEpisodes.map { it.id }.toSet() }
+    val displayedEpisodes = remember(series.episodes) { downloadEpisodeDisplayOrder(series.episodes) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
@@ -354,7 +355,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                             TextButton(onClick = { model.updateSelection("none") }) { Text("Clear") }
                         }
                     }
-                    items(series.episodes, key = { it.id }, contentType = { "download-episode-choice" }) { episode ->
+                    items(displayedEpisodes, key = { it.id }, contentType = { "download-episode-choice" }) { episode ->
                         val checked = episode.id in selected
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp))
                             .background(if (checked) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else MaterialTheme.colorScheme.surfaceContainerLow)
