@@ -83,7 +83,8 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                 // -1, and FFmpeg then silently skips earlier TS resources. Serve explicit ranges
                 // directly from cache and use an unknown total when metadata has none.
                 val requestedRange = range
-                if (requestedRange != null) {
+                val playlistUri = uri == masterUri || uri.toUri().path.orEmpty().endsWith(".m3u8", ignoreCase = true)
+                if (requestedRange != null && !playlistUri) {
                     val key = androidx.media3.datasource.cache.CacheKeyFactory.DEFAULT.buildCacheKey(
                         DataSpec.Builder().setUri(uri.toUri()).build())
                     val knownLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(
@@ -136,6 +137,8 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                         val original = String(bytes, Charsets.UTF_8)
                         val selected = if (uri == masterUri) selectCachedHlsVariant(original, quality) else original
                         val normalized = normalizeCachedByteRanges(selected, base)
+                        DebugTrace.event("cached_hls_playlist_served", "resource" to uri.hashCode().toUInt().toString(),
+                            "master" to (uri == masterUri), "rangeRequested" to (range != null), "bytes" to bytes.size)
                         normalized.lineSequence().joinToString("\n") { line ->
                             if (line.startsWith("#")) Regex("URI=\"([^\"]+)\"").replace(line) { "URI=\"${rewrite(it.groupValues[1])}\"" }
                             else if (line.isNotBlank()) rewrite(line.trim()) else line
@@ -143,7 +146,12 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                     } else null
                     val total = data?.size?.toLong() ?: length
                     require(total >= 0) { "Cached resource length unavailable" }
-                    val selected = try { parseByteRange(range, total) } catch (_: IllegalArgumentException) {
+                    // HLS playlists describe the complete segment table. FFmpeg can attach a
+                    // byte range while probing them; slicing the rewritten text makes its
+                    // segment URLs disappear and sends FFmpeg back to the gated CDN. As in the
+                    // working fetch script, always return the whole manifest and rewrite every
+                    // resource URL to this cache server. Byte ranges apply only to media bytes.
+                    val selected = try { parseByteRange(if (data != null) null else range, total) } catch (_: IllegalArgumentException) {
                         c.getOutputStream().write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$total\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                         return
                     }
