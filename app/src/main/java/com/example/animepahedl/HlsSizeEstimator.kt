@@ -45,6 +45,7 @@ internal class HlsSizeEstimator(private val cache: Cache, private val root: Cach
     fun update(): HlsTransferSample? {
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastSampleMs < 2_000L) return null
+        lastSampleMs = now
         val selected = tracks ?: runCatching {
             val factory = CacheDataSource.Factory().setCache(cache)
             cachedHlsMediaPlaylists(root, keys, factory).takeIf { playlists ->
@@ -56,7 +57,6 @@ internal class HlsSizeEstimator(private val cache: Cache, private val root: Cach
                 })
             }?.also { tracks = it }
         }.getOrNull() ?: return null
-        lastSampleMs = now
         val measurements = selected.map(::measureTrack)
         val estimates = measurements.zip(selected).mapNotNull { (sample, track) ->
             projectHlsTrackSize(track.durationUs, sample.first, sample.second)
