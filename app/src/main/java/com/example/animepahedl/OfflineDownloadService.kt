@@ -3,6 +3,8 @@ package com.example.animepahedl
 import androidx.core.content.edit
 import android.app.Notification
 import android.content.Context
+import androidx.core.net.toUri
+import androidx.media3.common.MimeTypes
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -10,6 +12,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
+import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
 import androidx.core.app.NotificationCompat
@@ -27,8 +30,10 @@ object OfflineDownloads {
     private var instance: DownloadManager? = null
     private var segmentExecutor: ThreadPoolExecutor? = null
     private val retryLock = kotlinx.coroutines.sync.Mutex()
-    private val hlsEstimates = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    internal fun estimatedBytes(id: String): Long = hlsEstimates[id] ?: -1L
+    private val resolvingLinks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    internal fun isGettingLink(id: String): Boolean = id in resolvingLinks
+    private val hlsSamples = java.util.concurrent.ConcurrentHashMap<String, HlsTransferSample>()
+    internal fun hlsSample(id: String): HlsTransferSample? = hlsSamples[id]
 
     /** Progress and state changes from Media3, consumed by the UI instead of a polling loop. */
     val updates = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1,
@@ -80,7 +85,7 @@ object OfflineDownloads {
             val id = request.id
             val record = records[id]
             !Exports.deleting(id) && retries.getBoolean(id, false) && retries.getInt("attempts:$id", 0) < MAX_TRANSFER_RESTARTS &&
-                record?.uri?.isEmpty() == true && record.identity?.isSiteDownload == true && record.media != null
+                record?.uri?.isEmpty() == true && downloadRecoveryEligibility(record).transferControllable
         }
         if (eligible.isEmpty() || manager.downloadsPaused) return@withLock
         DownloadService.startForeground(context, OfflineDownloadService::class.java)
@@ -114,16 +119,38 @@ object OfflineDownloads {
             .apply { allowCoreThreadTimeOut(true) }
         segmentExecutor = executor
         val downloaderFactory = androidx.media3.exoplayer.offline.DownloaderFactory { request ->
-            DeferredDownloader(create = {
-                // This runs on the download task, including after process recovery.
-                // Database loading must finish before choosing this download's HTTP context.
-                kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
+            fun createTransfer(renew: Boolean): androidx.media3.exoplayer.offline.Downloader {
+                runBlocking { DownloadStore.awaitReady() }
                 if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null)
-                    error("Choose the downloads folder and retry this episode.")
+                    error("Choose downloads folder")
                 val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
-                require(record.identity?.isSiteDownload == true) { "This download record is not supported by this edition." }
-                val media = requireNotNull(record.media) { "Video source context is missing. Retry to resolve this episode again." }
-                val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor))
+                val identity = requireNotNull(record.identity?.takeIf { it.isSiteDownload }) { "Video link unavailable" }
+                val cookies = SiteDownloadCookieStore(app)
+                val media = if (!renew && record.media != null) record.media else {
+                    val locator = requireNotNull(identity.locator?.takeIf(String::isNotBlank)) { "Video link unavailable" }
+                    resolvingLinks.add(request.id)
+                    updates.tryEmit(Unit)
+                    try {
+                        runBlocking {
+                            val resolved = cookies.applyTo(appSiteDownloadRepository(cookieHeader = cookies::headerFor)
+                                .resolve(locator, identity.quality, cookies.headerFor(locator), includeSubtitles = false))
+                            check(!Exports.deleting(request.id)) { "Download removed" }
+                            val current = requireNotNull(Exports.all(app)[request.id]) { "Download removed" }
+                            val quality = identity.quality.takeIf {
+                                resolved.isHls() && it.endsWith("p") && it.dropLast(1).toIntOrNull() != null
+                            } ?: resolved.quality
+                            if (resolved.url != current.media?.url) hlsSamples.remove(request.id)
+                            Exports.put(app, request.id, current.copy(quality = quality, audio = resolved.audio, media = resolved))
+                            DownloadStore.flush()
+                            resolved
+                        }
+                    } finally {
+                        resolvingLinks.remove(request.id)
+                        updates.tryEmit(Unit)
+                    }
+                }
+                val actualRequest = request.forResolvedMedia(media)
+                val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, cookies::headerFor))
                     .setTransferListener(transferListener)
                     .setContentTypePredicate { normalizedMediaType(it) !in setOf("text/html", "application/xhtml+xml") }
                 // Resolve headers for every manifest, segment, and encryption-key URI. HLS resources
@@ -134,21 +161,25 @@ object OfflineDownloads {
                 }
                 val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
                     .setUpstreamDataSourceFactory(resolving)
-                if (media.isHls()) {
-                    hlsEstimates.remove(request.id)
-                    selectedHlsDownloader(request, record.quality ?: media.quality, factory, executor) { bytes ->
-                        if (hlsEstimates.put(request.id, bytes) != bytes) updates.tryEmit(Unit)
+                return if (media.isHls()) {
+                    check(File(app.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so").exists()) { "HLS requires an ARM64 device" }
+                    val quality = Exports.all(app)[request.id]?.quality ?: media.quality
+                    selectedHlsDownloader(actualRequest, quality, factory, executor) { sample ->
+                        if (hlsSamples.put(request.id, sample) != sample) updates.tryEmit(Unit)
                     }
-                } else androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(request)
-            }, removeCached = {
+                } else androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(actualRequest)
+            }
+            DeferredDownloader(create = { createTransfer(false) }, refresh = { createTransfer(true) }, expired = ::isExpiredMediaResponse, removeCached = {
                 // Cache removal never needs a live provider session or output-folder access.
-                val stillNeeded = isHlsMimeType(request.mimeType) && Exports.all(app).any { (id, item) ->
-                    id != request.id && item.uri.isEmpty() && !Exports.deleting(id) && item.media?.url == request.uri.toString()
+                val records = Exports.all(app)
+                val actual = request.forResolvedMedia(records[request.id]?.media)
+                val stillNeeded = isHlsMimeType(actual.mimeType) && records.any { (id, item) ->
+                    id != request.id && item.uri.isEmpty() && !Exports.deleting(id) && item.media?.url == actual.uri.toString()
                 }
-                if (!stillNeeded) {
+                if (!stillNeeded && actual.mimeType != null) {
                     val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
                     androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor)
-                        .createDownloader(request).remove()
+                        .createDownloader(actual).remove()
                 }
             })
         }
@@ -181,6 +212,11 @@ object OfflineDownloads {
                     val causes = finalException?.let { generateSequence<Throwable>(it) { error -> error.cause }.toList() }.orEmpty()
                     val http = causes.filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>().firstOrNull()
                     val id = download.request.id
+                    if (download.state == Download.STATE_FAILED && causes.any { it is MediaLinkExpired }) {
+                        DownloadStore.operation(id, "expired-media", "1")
+                    } else if (download.state != Download.STATE_FAILED && DownloadStore.operationValue(id, "expired-media") != null) {
+                        DownloadStore.operation(id, "expired-media", null)
+                    }
                     if (download.state == Download.STATE_FAILED) {
                         val retry = challenge == null && !Exports.deleting(id) &&
                             causes.none { it is androidx.media3.datasource.HttpDataSource.InvalidContentTypeException } &&
@@ -191,7 +227,7 @@ object OfflineDownloads {
                     }
                     if (download.state == Download.STATE_COMPLETED || download.state == Download.STATE_REMOVING) {
                         retries.edit { remove(id); remove("attempts:$id") }
-                        hlsEstimates.remove(id)
+                        hlsSamples.remove(id)
                     }
                     if (download.state == Download.STATE_COMPLETED && !Exports.deleting(download.request.id)) {
                         app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { remove(download.request.id) }
@@ -215,6 +251,20 @@ object OfflineDownloads {
 }
 
 internal data class MediaVerification(val id: String, val url: String, val browserUrl: String, val time: Long)
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun DownloadRequest.forResolvedMedia(media: ResolvedMedia?): DownloadRequest {
+    if (media == null) return this
+    val hls = media.isHls()
+    val type = if (hls) MimeTypes.APPLICATION_M3U8 else media.mimeType ?: MimeTypes.VIDEO_MP4
+    return DownloadRequest.Builder(id, media.url.toUri()).setMimeType(type).setStreamKeys(streamKeys)
+        .setCustomCacheKey(customCacheKey.takeUnless { hls }).setKeySetId(keySetId).setData(data).build()
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun isExpiredMediaResponse(failure: Exception): Boolean = generateSequence<Throwable>(failure) { it.cause }
+    .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
+    .any { it.responseCode in setOf(401, 403, 404, 410) }
 private const val MAX_TRANSFER_RESTARTS = 3
 
 internal fun isTransientTransferHttpStatus(status: Int?): Boolean = status == null || status == 408 || status == 429 || status in 500..599
@@ -259,7 +309,14 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
     }
     override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification {
         val active = downloads.filter { it.state == Download.STATE_DOWNLOADING }
-        val known = active.map { estimatedTransferProgress(it.percentDownloaded, it.bytesDownloaded, OfflineDownloads.estimatedBytes(it.request.id)) }
+        val records = Exports.all(this)
+        val known = active.map { download ->
+            val id = download.request.id
+            val hls = runCatching { records[id]?.media?.isHls() }.getOrNull() ?: isHlsMimeType(download.request.mimeType)
+            val reported = download.percentDownloaded.takeUnless { hls || OfflineDownloads.isGettingLink(id) } ?: -1f
+            val coverage = if (hls && !OfflineDownloads.isGettingLink(id)) OfflineDownloads.hlsSample(id)?.percent else null
+            mediaCoverageProgress(reported, coverage)
+        }
             .filter { it >= 0f }
         val percent = if (active.isNotEmpty() && known.size == active.size) known.average().toInt().coerceIn(0, 100) else null
         val rate = if (active.isEmpty()) { DownloadSpeed.reset(); 0L } else DownloadSpeed.sample()
@@ -268,12 +325,13 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
         val text = when {
             notMetRequirements != 0 -> "Waiting for internet"
             active.isEmpty() -> "Waiting to download"
+            active.all { OfflineDownloads.isGettingLink(it.request.id) } -> "Getting link"
             else -> listOfNotNull(percent?.let { if (active.size > 1) "Average $it%" else "$it%" }, rate.takeIf { it > 0 }?.let { "${Formatter.formatShortFileSize(this, it)}/s" }).joinToString(" · ").ifEmpty { "Downloading" }
         }
         return NotificationCompat.Builder(this, "downloads")
             .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text)
             .setContentIntent(downloadsPendingIntent(this)).setOnlyAlertOnce(true).setOngoing(true)
-            .addAction(0, if (OfflineDownloads.manager(this).downloadsPaused) "Resume HLS" else "Pause HLS",
+            .addAction(0, if (OfflineDownloads.manager(this).downloadsPaused) "Resume" else "Pause",
                 android.app.PendingIntent.getForegroundService(this, 31,
                     if (OfflineDownloads.manager(this).downloadsPaused) DownloadService.buildResumeDownloadsIntent(this, OfflineDownloadService::class.java, true)
                     else DownloadService.buildPauseDownloadsIntent(this, OfflineDownloadService::class.java, true),

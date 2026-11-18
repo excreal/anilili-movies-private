@@ -42,11 +42,11 @@ internal fun mergePreparedQueueRows(actual: List<DownloadRow>, pending: SiteDown
                 thumbnail = batch.series.posterThumbnail(),
                 quality = batch.quality,
                 explanation = when {
-                    status.needsFolderAccess -> "Queued · choose downloads folder"
-                    status.paused -> status.label.ifBlank { "Queued · link preparation paused" }
-                    status.verificationUrl != null -> "Could not prepare download link. Retry this episode."
-                    status.running && status.activeRowId == id -> "Preparing download link"
-                    else -> "Queued · " + status.label.ifBlank { "waiting to prepare link" }
+                    status.needsFolderAccess -> "Choose folder"
+                    status.verificationUrl != null -> "Verify session"
+                    status.paused -> status.label.ifBlank { "Paused" }
+                    status.running && status.activeRowId == id -> "Adding to queue"
+                    else -> status.label.ifBlank { "Queued" }
                 },
                 showId = showId,
                 episodeId = episode.id,

@@ -80,8 +80,8 @@ class RecoveryPolicyTest {
         val directLink = ExportRecord("clip", "", "", identity = identity, media = media)
         assertEquals(DownloadRecoveryEligibility(retryable = true, transferControllable = true),
             downloadRecoveryEligibility(directLink))
-        // A fresh source retry needs the locator, while pause/resume needs the persisted request context.
-        assertEquals(DownloadRecoveryEligibility(retryable = true, transferControllable = false),
+        // A queued transfer can be paused or resumed before its locator has been resolved.
+        assertEquals(DownloadRecoveryEligibility(retryable = true, transferControllable = true),
             downloadRecoveryEligibility(directLink.copy(media = null)))
         val legacy = directLink.copy(identity = identity.copy(source = null, locator = null))
         assertEquals(DownloadRecoveryEligibility(retryable = false, transferControllable = false),

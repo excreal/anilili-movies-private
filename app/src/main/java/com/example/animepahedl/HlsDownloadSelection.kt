@@ -16,7 +16,6 @@ import java.io.IOException
 import java.util.concurrent.Executor
 
 internal data class CachedHlsPlaylist(val uri: Uri, val text: String)
-internal data class SelectedHlsPlaylists(val media: List<HlsMediaPlaylist>, val averageBitrate: Int = -1)
 
 /** Read through the download cache, retaining the final URI for resolving relative resources. */
 internal fun readHlsPlaylist(source: CacheDataSource, uri: Uri): CachedHlsPlaylist =
@@ -46,24 +45,23 @@ internal fun selectedHlsStreamKeys(playlist: CachedHlsPlaylist, quality: String)
     }
 }
 
-internal fun cachedHlsMediaPlaylists(root: CachedHlsPlaylist, keys: List<StreamKey>, cacheFactory: CacheDataSource.Factory): SelectedHlsPlaylists =
+internal fun cachedHlsMediaPlaylists(root: CachedHlsPlaylist, keys: List<StreamKey>, cacheFactory: CacheDataSource.Factory): List<HlsMediaPlaylist> =
     when (val manifest = HlsPlaylistParser().parse(root.uri, root.text.byteInputStream())) {
-        is HlsMediaPlaylist -> SelectedHlsPlaylists(listOf(manifest))
+        is HlsMediaPlaylist -> listOf(manifest)
         is HlsMultivariantPlaylist -> {
             val selected = if (keys.isEmpty()) manifest else manifest.copy(keys)
             val parser = HlsPlaylistParser(selected, null)
-            val media = selected.mediaPlaylistUrls.map {
+            selected.mediaPlaylistUrls.map {
                 val child = readHlsPlaylist(cacheFactory.createDataSource(), it)
                 parser.parse(child.uri, child.text.byteInputStream()) as HlsMediaPlaylist
             }
-            SelectedHlsPlaylists(media, selected.variants.singleOrNull()?.format?.averageBitrate ?: -1)
         }
         else -> throw IOException("Unsupported HLS playlist")
     }
 
 /** Called inside the download task. The first request fills the cache the downloader will read. */
 internal fun selectedHlsDownloader(request: DownloadRequest, quality: String, factory: CacheDataSource.Factory, executor: Executor,
-    onEstimatedBytes: (Long) -> Unit = {}): Downloader {
+    onSample: (HlsTransferSample) -> Unit = {}): Downloader {
     val root = readHlsPlaylist(factory.createDataSourceForDownloading(), request.uri)
     if (root.uri != request.uri) {
         val keyFactory = factory.cacheKeyFactory
@@ -79,10 +77,12 @@ internal fun selectedHlsDownloader(request: DownloadRequest, quality: String, fa
     val estimates = HlsSizeEstimator(requireNotNull(factory.cache), root, keys)
     return object : Downloader by delegate {
         override fun download(progressListener: Downloader.ProgressListener?) {
+            // Restored downloads may already have enough cached fragments to provide an estimate.
+            runCatching { estimates.update() }.getOrNull()?.let(onSample)
             delegate.download { length, bytes, percent ->
                 progressListener?.onProgress(length, bytes, percent)
                 // Estimation is optional. An unreadable cache sample must not fail a transfer.
-                runCatching { estimates.update(length, bytes) }.getOrNull()?.let(onEstimatedBytes)
+                runCatching { estimates.update() }.getOrNull()?.let(onSample)
             }
         }
     }

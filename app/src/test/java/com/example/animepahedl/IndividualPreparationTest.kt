@@ -11,16 +11,17 @@ class IndividualPreparationTest {
     @Test fun failureAndPauseRemainLocalAndOtherEpisodesKeepPreparing() {
         val ids = episodes.map { pendingEpisodeRowId(series, it) }
         val status = aggregatePreparationStatus(mapOf(
-            ids[0] to PreparationStatus(true, paused = true, label = "Could not prepare this link after 3 attempts. Resume to retry."),
+            ids[0] to PreparationStatus(true, paused = true, label = "Couldn’t queue"),
             ids[1] to PreparationStatus(true, running = true, activeRowId = ids[1]),
             ids[2] to PreparationStatus(true)))
         val rows = mergePreparedQueueRows(emptyList(), SiteDownloadPreparation(series, episodes, "Best"), status)
         assertTrue(status.automatic)
         assertEquals(TransferState.PAUSED, rows[0].transfer)
         assertEquals(setOf(DownloadAction.DELETE, DownloadAction.RESUME), rows[0].actions)
-        assertEquals("Preparing download link", rows[1].status)
+        assertEquals("Couldn’t queue", rows[0].status)
+        assertEquals("Adding to queue", rows[1].status)
         assertTrue(DownloadAction.PAUSE in rows[1].actions)
-        assertFalse(rows[2].status.contains("3 attempts"))
+        assertEquals("Queued", rows[2].status)
     }
 
     @Test fun anotherRequestedQualityStaysVisibleBesideExistingEpisode() {

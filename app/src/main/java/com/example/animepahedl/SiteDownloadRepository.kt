@@ -46,10 +46,10 @@ internal class SiteDownloadRepository(
         }
     }
 
-    suspend fun resolve(locator: String, quality: String = "Best", cookie: String = ""): ResolvedMedia = withContext(Dispatchers.IO) {
+    suspend fun resolve(locator: String, quality: String = "Best", cookie: String = "", includeSubtitles: Boolean = true): ResolvedMedia = withContext(Dispatchers.IO) {
         val input = siteDownloadInput(locator)
         val provider = requireAllowedProvider(input)
-        val variants = episodeVariants(input, provider, cookie)
+        val variants = episodeVariants(input, provider, cookie, includeSubtitles)
         val chosen = chooseMediaVariant(variants, quality)
         val headers = linkedMapOf("User-Agent" to userAgent)
         if (provider != SiteDownloadProvider.DIRECT) headers["Referer"] = input.toString()

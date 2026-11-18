@@ -23,7 +23,7 @@ internal interface DownloadRepository {
     suspend fun retrySave(id: String)
     suspend fun delete(id: String, deleteSavedFile: Boolean = true): ItemResult
     suspend fun deleteBatch(ids: Set<String>, confirmedSaved: Set<String> = ids): List<ItemResult> = ids.map { delete(it, it in confirmedSaved) }
-    suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord? = null): String
+    suspend fun enqueue(identity: DownloadIdentity, previous: ExportRecord? = null): String
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -40,14 +40,20 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
     }
     private fun readDownloadRows(index: androidx.media3.exoplayer.offline.DownloadIndex, activeDownloads: Map<String, Download>, paused: Boolean, requirements: Int): List<DownloadRow> {
         val rows = mutableListOf<DownloadRow>()
+        val exports = Exports.all(app)
+        val savedHls = exports.values.filter { it.uri.isNotBlank() && it.bytes > 0 && it.isHlsTransfer() }
+            .groupBy { Triple(it.identity?.anime?.session, it.quality, it.audio) }
         index.getDownloads().use { cursor ->
             while (cursor.moveToNext()) {
                 val stored = cursor.download
                 val download = activeDownloads[stored.request.id] ?: stored
+                val id = download.request.id
+                val record = exports[id]
+                val hls = if (record?.media != null) record.isHlsTransfer() else isHlsMimeType(download.request.mimeType)
                 val status = when (download.state) {
                     Download.STATE_COMPLETED -> TransferState.COMPLETE
                     Download.STATE_FAILED -> TransferState.FAILED
-                    Download.STATE_DOWNLOADING -> TransferState.DOWNLOADING
+                    Download.STATE_DOWNLOADING -> if (OfflineDownloads.isGettingLink(id)) TransferState.RESOLVING else TransferState.DOWNLOADING
                     Download.STATE_QUEUED -> when {
                         paused -> TransferState.PAUSED
                         requirements != 0 -> TransferState.WAITING_NETWORK
@@ -58,14 +64,17 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
                     else -> TransferState.QUEUED
                 }
                 val bytes = download.bytesDownloaded.coerceAtLeast(0L)
-                val estimated = if (status == TransferState.DOWNLOADING || status == TransferState.PAUSED)
-                    OfflineDownloads.estimatedBytes(download.request.id).takeIf { it >= bytes } ?: -1L else -1L
-                rows += DownloadRow(download.request.id, String(download.request.data), status,
-                    estimatedTransferProgress(download.percentDownloaded, bytes, estimated),
-                    bytes, displayTransferTotal(bytes, download.contentLength, isHlsMimeType(download.request.mimeType)), estimatedTotalBytes = estimated)
+                val active = status == TransferState.DOWNLOADING || status == TransferState.PAUSED
+                val sample = if (active && hls) OfflineDownloads.hlsSample(id) else null
+                val estimated = if (active && hls && record?.identity != null) {
+                    val peers = savedHls[Triple(record.identity.anime.session, record.quality, record.audio)].orEmpty()
+                    estimateSavedHlsSize(sample, peers)
+                } else -1L
+                val reported = if (active && !hls) download.percentDownloaded else -1f
+                rows += DownloadRow(id, String(download.request.data), status, mediaCoverageProgress(reported, sample?.percent),
+                    bytes, displayTransferTotal(bytes, download.contentLength, hls), estimatedTotalBytes = estimated)
             }
         }
-        val exports = Exports.all(app)
         val system = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         DownloadStore.operations("direct").filterKeys { exports["direct:$it"]?.uri.isNullOrEmpty() }.forEach { (id, title) ->
             val number = id.toLongOrNull() ?: return@forEach
@@ -89,9 +98,10 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
         // Keep app-owned rows visible even if an engine has already removed its staging entry.
         val engineIds = rows.mapTo(HashSet()) { it.id }
         exports.filter { (id, record) -> record.uri.isEmpty() && id !in engineIds }.forEach { (id, record) ->
-            rows += DownloadRow(id, record.title, TransferState.FAILED, -1f, explanation = "Temporary media is unavailable. Open the show and select the episode again.")
+            rows += DownloadRow(id, record.title, TransferState.FAILED, -1f, explanation = "Video unavailable")
         }
         val challenges = mediaVerificationEvents(app)
+        val expired = DownloadStore.operations("expired-media")
         val deleting = DownloadStore.operations("delete")
         return rows.filter { exports[it.id]?.uri.isNullOrEmpty() }.map { row ->
             val record = exports[row.id]
@@ -102,14 +112,13 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
                 audioCode = record?.audio, quality = record?.quality, showId = record?.identity?.anime?.session.orEmpty(), episodeId = record?.identity?.episode?.session.orEmpty(), showTitle = record?.identity?.anime?.title ?: record?.showTitle.orEmpty(), episodeNumber = record?.identity?.episode?.number ?: record?.episodeNumber.orEmpty(),
                 retryable = eligibility.retryable, transferControllable = eligibility.transferControllable,
                 explanation = if (row.transfer == TransferState.FAILED && !eligibility.retryable)
-                    "This older download cannot be retried. Open the show and select the episode again."
-                else if (row.explanation != null) "Temporary media is unavailable. Retry to resolve a fresh source."
-                else null)
+                    "Add video again" else row.explanation)
             when {
-                row.id in deleting -> metadata.copy(failure = FailureReason.DELETION, explanation = deleting[row.id].orEmpty().ifBlank { "Deleting…" }, deleting = true)
+                row.id in deleting -> metadata.copy(failure = FailureReason.DELETION, explanation = if (deleting[row.id].isNullOrEmpty()) "Removing" else "Couldn’t remove", deleting = true)
                 row.transfer == TransferState.FAILED && row.id in challenges -> metadata.copy(failure = FailureReason.VERIFICATION, explanation = null)
+                row.transfer == TransferState.FAILED && row.id in expired -> metadata.copy(failure = FailureReason.EXPIRED_SOURCE, explanation = null)
                 row.transfer == TransferState.COMPLETE && record?.error?.isNotEmpty() == true -> metadata.copy(save = SaveState.FAILED,
-                    failure = classifyFailure(record.error), explanation = record.error)
+                    failure = classifyFailure(record.error))
                 row.transfer == TransferState.COMPLETE && record != null -> Exports.progress[row.id]?.let {
                     metadata.copy(save = when (it.stage) {
                         "Preparing MP4", "Retrying MP4", "Preparing video" -> SaveState.PREPARING
@@ -123,9 +132,12 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
             DownloadRow(id, record.episodeTitle(), TransferState.COMPLETE, 100f, record.bytes, record.bytes, record.uri,
                 artwork.getString(id.take(36), null) ?: record.thumbnail.orEmpty(), record.audio, record.quality,
                 availability = Availability.SAVED, failure = if (id in deleting) FailureReason.DELETION else if (record.error.isNotBlank()) FailureReason.FOLDER_ACCESS else null,
-                explanation = deleting[id]?.ifBlank { "Deleting…" } ?: record.error.takeIf { it.isNotBlank() }, deleting = id in deleting, showId = record.identity?.anime?.session.orEmpty(), episodeId = record.identity?.episode?.session.orEmpty(), showTitle = record.identity?.anime?.title ?: record.showTitle.orEmpty(), episodeNumber = record.identity?.episode?.number ?: record.episodeNumber.orEmpty())
+                explanation = deleting[id]?.let { if (it.isBlank()) "Removing" else "Couldn’t remove" }
+                    ?: "Choose folder".takeIf { record.error.isNotBlank() }, deleting = id in deleting, showId = record.identity?.anime?.session.orEmpty(), episodeId = record.identity?.episode?.session.orEmpty(), showTitle = record.identity?.anime?.title ?: record.showTitle.orEmpty(), episodeNumber = record.identity?.episode?.number ?: record.episodeNumber.orEmpty())
         }
     }
+
+    private fun ExportRecord.isHlsTransfer(): Boolean = runCatching { media?.isHls() == true }.getOrDefault(false)
 
     override suspend fun pause(id: String) {
         if (Exports.deleting(id)) return
@@ -133,13 +145,19 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
     }
 
     override suspend fun resume(id: String) {
-        require(Exports.all(app)[id]?.let { it.identity?.isSiteDownload == true && it.media != null } == true) {
+        require(downloadRecoveryEligibility(Exports.all(app)[id]).transferControllable) {
             "This download has no saved source context. Open the show and select the episode again."
         }
         if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
         if (Exports.deleting(id)) return
-        DownloadService.sendSetStopReason(app, OfflineDownloadService::class.java, id, Download.STOP_REASON_NONE, true)
-        DownloadService.sendResumeDownloads(app, OfflineDownloadService::class.java, true)
+        val manager = withContext(Dispatchers.Main.immediate) { OfflineDownloads.manager(app) }
+        val current = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(id) }
+        if (current == null || current.state == Download.STATE_FAILED) { retry(id); return }
+        withContext(Dispatchers.Main.immediate) {
+            DownloadService.startForeground(app, OfflineDownloadService::class.java)
+            manager.setStopReason(id, Download.STOP_REASON_NONE)
+            manager.resumeDownloads()
+        }
     }
 
     override suspend fun delete(id: String, deleteSavedFile: Boolean): ItemResult {
@@ -187,6 +205,7 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
                     Exports.remove(app, id)
                     DownloadStore.operation(id, "delete", null)
                     DownloadStore.operation(id, "delete-keep-file", null)
+                    DownloadStore.operation(id, "expired-media", null)
                     DownloadStore.flush()
                     ItemResult(id, true)
                 }
@@ -202,37 +221,35 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
     private companion object {
         val enqueueLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
     }
-    override suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord?): String {
+    override suspend fun enqueue(identity: DownloadIdentity, previous: ExportRecord?): String {
         require(identity.isSiteDownload) { "Only supported source downloads can be queued here." }
         return enqueueLocks.getOrPut(identity.key) { kotlinx.coroutines.sync.Mutex() }.withLock {
-            enqueueLocked(identity, media, previous)
+            enqueueLocked(identity, previous)
         }
     }
-    private suspend fun enqueueLocked(identity: DownloadIdentity, media: ResolvedMedia, previous: ExportRecord?): String {
+    private suspend fun enqueueLocked(identity: DownloadIdentity, previous: ExportRecord?): String {
         DownloadStore.awaitReady()
-        if (!hasOutputFolderAccess(app)) throw OutputFolderAccessRequired()
+        if (!hasOutputFolderAccess(app) || DownloadStore.operationValue("transfers", "folder-access") != null) throw OutputFolderAccessRequired()
+        val locator = requireNotNull(identity.locator?.takeIf(String::isNotBlank)) { "Video link is missing" }
         val id = identity.key
         if (Exports.deleting(id)) error("This episode is being removed. Try again after removal finishes.")
         val manager = withContext(Dispatchers.Main.immediate) { OfflineDownloads.manager(app) }
-        if (previous == null) Exports.all(app).entries.firstOrNull { (id, record) ->
-            !Exports.deleting(id) && (record.identity?.key == identity.key || id == identity.key)
-        }?.let { (id, record) ->
-            if (record.uri.isNotEmpty()) return id
-            val existing = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(id) }
+        if (previous == null) for ((existingId, record) in Exports.all(app)) {
+            if (Exports.deleting(existingId) || !matchesQueuedVideo(identity, record, existingId)) continue
+            if (record.uri.isNotEmpty()) return existingId
+            val existing = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(existingId) }
             // A durable record alone does not prove the engine accepted the request. A process
             // may have died between flush() and sendAddDownload(), or the transfer may have failed.
-            if (record.media != null && existing != null && existing.state != Download.STATE_FAILED) return id
+            if (existing != null && existing.state != Download.STATE_FAILED) return existingId
         }
-        val title = identity.anime.title + (if (identity.isSingleVideo) "" else " · Episode ${identity.episode.number}") + " · ${media.quality} · ${audioTag(media.audio)}"
+        val title = identity.anime.title + (if (identity.isSingleVideo) "" else " · Episode ${identity.episode.number}")
         val record = previous?.copy(title = title, showTitle = identity.anime.title, episodeNumber = identity.episode.number,
-            quality = media.quality, audio = media.audio, error = "", uri = "", identity = identity, media = media)
+            error = "", uri = "", identity = identity)
             ?: ExportRecord(title, settings.outputTree, settings.outputFolder, thumbnail = identity.anime.poster,
-                audio = media.audio, quality = media.quality, showTitle = identity.anime.title, episodeNumber = identity.episode.number, identity = identity, media = media)
-        if (media.isHls()) require(java.io.File(app.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so").exists()) { "Saving HLS requires an ARM64 device. This device cannot run the bundled exporter." }
-        // Media3 makes the first media request. A probe could consume a one-time URL or redirect.
+                audio = identity.audio, quality = identity.quality, showTitle = identity.anime.title, episodeNumber = identity.episode.number, identity = identity)
+        // The index stores the stable locator. The actual media URL belongs to a running task.
         if (Exports.deleting(id)) error("This episode is being removed. Try again after removal finishes.")
-        val mime = if (media.isHls()) MimeTypes.APPLICATION_M3U8 else media.mimeType ?: MimeTypes.VIDEO_MP4
-        val request = DownloadRequest.Builder(id, (media.url).toUri()).setMimeType(mime).setData(title.toByteArray()).build()
+        val request = DownloadRequest.Builder(id, locator.toUri()).setData(title.toByteArray()).build()
         val before = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(id)?.updateTimeMs }
         Exports.put(app, id, record)
         DownloadStore.flush()
@@ -265,15 +282,7 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
             if (identity == null) {
                 error("This download has no saved source context. Open the show and select the episode again.")
             }
-            val media = if (identity.isSiteDownload) {
-                val locator = identity.locator?.takeIf { it.isNotBlank() }
-                    ?: error("This video download has no source locator. Inspect its link again.")
-                val cookies = SiteDownloadCookieStore(app)
-                cookies.applyTo(appSiteDownloadRepository(cookieHeader = cookies::headerFor).resolve(locator, identity.quality, cookies.headerFor(locator)))
-            } else {
-                error("This older download cannot be retried automatically. Open the show and select the episode again.")
-            }
-            val newId = enqueue(identity, media, record)
+            val newId = enqueue(identity, record)
             if (newId != id) {
                 app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { remove(id) }
                 if (id.startsWith("direct:")) withContext(Dispatchers.IO) {

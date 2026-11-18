@@ -242,11 +242,11 @@ internal data class CachedHlsMedia(val durationUs: Long, val mediaBytes: Long)
 
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun requireCachedHlsSegments(context: Context, id: String): CachedHlsMedia {
-    val request = OfflineDownloads.manager(context).downloadIndex.getDownload(id)?.request
+    val record = Exports.all(context)[id]
+    val request = OfflineDownloads.manager(context).downloadIndex.getDownload(id)?.request?.forResolvedMedia(record?.media)
         ?: error("Temporary download is unavailable")
     val cache = OfflineDownloads.cache
     val factory = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(null)
-    val record = Exports.all(context)[id]
     fun resource(base: String, path: String, offset: Long = 0, length: Long = androidx.media3.common.C.LENGTH_UNSET.toLong()): Long {
         val key = androidx.media3.common.util.UriUtil.resolve(base, path)
         val cachedResourceLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key))
@@ -273,7 +273,7 @@ internal fun requireCachedHlsSegments(context: Context, id: String): CachedHlsMe
     val keys = request.streamKeys.ifEmpty {
         if (record?.identity?.isSiteDownload == true) selectedHlsStreamKeys(root, record.quality ?: "Best") else emptyList()
     }
-    val media = cachedHlsMediaPlaylists(root, keys, factory).media
+    val media = cachedHlsMediaPlaylists(root, keys, factory)
     require(media.isNotEmpty()) { "Selected playlists are missing" }
     var mediaBytes = 0L
     for (item in media) {
@@ -303,14 +303,15 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
     val executable = File(context.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so")
     require(executable.exists()) { "FFmpeg is available only on arm64 devices" }
     val record = Exports.all(context)[id]
+    val mediaUrl = download.request.forResolvedMedia(record?.media).uri.toString()
     val siteDownload = record?.identity?.isSiteDownload == true
     val durationUs = (source ?: requireCachedHlsSegments(context, id)).durationUs
     DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
-    val server = CachedHlsServer(download.request.uri.toString().takeIf { siteDownload }, record?.quality ?: "Best")
+    val server = CachedHlsServer(mediaUrl.takeIf { siteDownload }, record?.quality ?: "Best")
     val errors = File(context.cacheDir, "ffmpeg-${id.hashCode().toUInt()}.log")
     try {
         val args = listOf(executable.absolutePath, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-stats_period", "0.25", "-progress", "pipe:1",
-            "-protocol_whitelist", "http,tcp,crypto,data", "-allowed_extensions", "ALL", "-extension_picky", "0", "-f", "hls", "-i", server.url(download.request.uri.toString()),
+            "-protocol_whitelist", "http,tcp,crypto,data", "-allowed_extensions", "ALL", "-extension_picky", "0", "-f", "hls", "-i", server.url(mediaUrl),
             "-map", "0:v:0", "-map", if (!siteDownload && record?.audio?.isNotBlank() == true) "0:a:0" else "0:a:0?", "-c", "copy", "-f", "mp4", output.absolutePath)
         val process = ProcessBuilder(args).redirectError(errors).start()
         val lastProgress = java.util.concurrent.atomic.AtomicLong(System.nanoTime())

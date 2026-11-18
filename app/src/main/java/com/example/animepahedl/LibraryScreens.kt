@@ -55,11 +55,10 @@ import com.anilili.data.settings.PlayerAspectRatio
 
 internal fun friendlyDownloadStatus(status: String): String = when (status) {
     "Downloading HLS", "Downloading file" -> "Downloading"
-    "Queued" -> "Waiting to download"
     "Waiting to save" -> "Waiting to save"
-    "Preparing MP4", "Retrying MP4" -> "Preparing video"
-    "Checking MP4" -> "Checking video"
-    "Copying to folder" -> "Saving to folder"
+    "Preparing MP4", "Retrying MP4", "Preparing video" -> "Processing"
+    "Checking MP4", "Checking saved video", "Checking video" -> "Checking"
+    "Copying to folder" -> "Saving"
     "Ready offline", "Saved to Downloads", "Saved to folder" -> "Ready"
     else -> if (status.startsWith("Save failed")) "Couldn’t save video" else if (status.startsWith("Failed")) "Download failed" else status
 }
@@ -294,7 +293,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                     val seconds = it / 1000
                     "Resume at ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
                 }
-                val showProgress = !pendingRow && !row.failed && (row.transfer == TransferState.DOWNLOADING || row.saving)
+                val showProgress = !pendingRow && !row.failed && (row.transfer in setOf(TransferState.RESOLVING, TransferState.DOWNLOADING) || row.saving)
                 val control = when {
                     DownloadAction.RETRY in row.actions -> AppIcon.Refresh
                     DownloadAction.RESUME in row.actions -> AppIcon.Play
@@ -307,19 +306,13 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                             row.showTitle.ifBlank { parts.first() } else "Episode ${row.episodeNumber.ifBlank { parts.getOrNull(1)?.removePrefix("Episode ").orEmpty() }}") +
                             row.audioCode?.takeIf { it.isNotBlank() && it != "und" }?.let { " · ${audioTag(it)}" }.orEmpty(),
                         subtitle = (row.quality ?: parts.getOrNull(2).orEmpty()).takeUnless { it in setOf("Original", "Best") }.orEmpty(), artworkUrl = row.thumbnail,
-                        status = listOfNotNull(if (watched) "Watched" else resumeLabel, if (row.complete && !row.failed) "In Downloads folder" else friendlyDownloadStatus(row.status),
-                            row.bytes.takeIf { it > 0 || row.estimatedTotalBytes > 0 }?.let { bytes ->
+                        status = listOfNotNull(if (watched) "Watched" else resumeLabel, if (row.complete && !row.failed) "Saved" else friendlyDownloadStatus(row.status),
+                            row.bytes.takeIf { it > 0 && row.transfer != TransferState.RESOLVING }?.let { bytes ->
                                 val size = Formatter.formatShortFileSize(context, bytes)
-                                when {
-                                    row.complete -> size
-                                    row.totalBytes > 0 -> "$size / ${Formatter.formatShortFileSize(context, row.totalBytes)}"
-                                    row.estimatedTotalBytes > 0 -> "$size / ≈${Formatter.formatShortFileSize(context, row.estimatedTotalBytes)}"
-                                    row.save == SaveState.PREPARING -> "$size written"
-                                    row.save == SaveState.CHECKING -> "$size checked"
-                                    row.save == SaveState.COPYING -> "$size copied"
-                                    else -> "$size downloaded"
-                                }
+                                if (row.totalBytes > 0 && !row.complete && row.totalBytes != bytes)
+                                    "$size / ${Formatter.formatShortFileSize(context, row.totalBytes)}" else size
                             },
+                            row.estimatedTotalBytes.takeIf { it > 0 }?.let { "≈${Formatter.formatShortFileSize(context, it)} final" },
                             row.percent.takeIf { it >= 0 && !row.complete }?.let { "${it.toInt()}%" }).joinToString(" · "),
                         playable = row.complete && !row.deleting, failed = row.failed, watched = watched,
                         watchProgress = if (!watched && historyKey.isNotBlank()) playbackHistory.fraction(historyKey) else 0f,

@@ -1,6 +1,6 @@
 package com.example.animepahedl
 
-enum class TransferState { QUEUED, DOWNLOADING, PAUSED, WAITING_NETWORK, COMPLETE, FAILED, REMOVING }
+enum class TransferState { QUEUED, RESOLVING, DOWNLOADING, PAUSED, WAITING_NETWORK, COMPLETE, FAILED, REMOVING }
 enum class SaveState { NONE, WAITING, PREPARING, CHECKING, COPYING, FAILED }
 enum class Availability { STAGING, SAVED }
 enum class DownloadAction { PAUSE, RESUME, RETRY, RETRY_SAVE, VERIFY, DELETE }
@@ -15,8 +15,8 @@ internal fun byteProgress(bytes: Long, total: Long): Float =
 internal fun displayTransferTotal(bytes: Long, reportedTotal: Long, hls: Boolean): Long =
     if (!hls && reportedTotal > 0 && bytes in 0..reportedTotal) reportedTotal else -1L
 
-internal fun estimatedTransferProgress(reported: Float, bytes: Long, estimate: Long): Float =
-    if (estimate > 0 && bytes > 0) byteProgress(bytes, estimate).coerceAtMost(99f) else normalizedProgress(reported)
+internal fun mediaCoverageProgress(reported: Float, coverage: Float?): Float =
+    normalizedProgress(coverage ?: reported).let { if (it >= 0) it.coerceAtMost(99f) else it }
 
 data class DownloadRow(val id: String, val title: String, val transfer: TransferState, val percent: Float,
     val bytes: Long = 0, val totalBytes: Long = -1, val savedUri: String = "",
@@ -35,19 +35,23 @@ data class DownloadRow(val id: String, val title: String, val transfer: Transfer
         else if (transfer == TransferState.FAILED && !complete && retryable) add(DownloadAction.RETRY)
         if (transferControllable && !id.startsWith("direct:") && !complete && save == SaveState.NONE && failure == null) {
             if (transfer == TransferState.PAUSED) add(DownloadAction.RESUME)
-            if (transfer in setOf(TransferState.QUEUED, TransferState.DOWNLOADING, TransferState.WAITING_NETWORK)) add(DownloadAction.PAUSE)
+            if (transfer in setOf(TransferState.QUEUED, TransferState.RESOLVING, TransferState.DOWNLOADING, TransferState.WAITING_NETWORK)) add(DownloadAction.PAUSE)
         }
     }
     val status get() = explanation ?: when {
         complete -> "Ready"
-        failure == FailureReason.VERIFICATION -> "Session verification needed"
-        save == SaveState.FAILED -> "Couldn’t save video"
+        failure == FailureReason.VERIFICATION -> "Verify session"
+        failure == FailureReason.FOLDER_ACCESS -> "Choose folder"
+        failure == FailureReason.STORAGE_FULL -> "Storage full"
+        failure == FailureReason.EXPIRED_SOURCE -> "Link expired"
+        save == SaveState.FAILED -> "Couldn’t save"
         save == SaveState.WAITING -> "Waiting to save"
-        save == SaveState.PREPARING -> "Preparing video"
-        save == SaveState.CHECKING -> "Checking video"
-        save == SaveState.COPYING -> "Saving to folder"
+        save == SaveState.PREPARING -> "Processing"
+        save == SaveState.CHECKING -> "Checking"
+        save == SaveState.COPYING -> "Saving"
         else -> when (transfer) {
-            TransferState.QUEUED -> "Waiting to download"
+            TransferState.QUEUED -> "Queued"
+            TransferState.RESOLVING -> "Getting link"
             TransferState.DOWNLOADING -> "Downloading"
             TransferState.PAUSED -> "Paused"
             TransferState.WAITING_NETWORK -> "Waiting for internet"
@@ -80,14 +84,18 @@ internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val
 
 internal data class DownloadRecoveryEligibility(val retryable: Boolean, val transferControllable: Boolean)
 
+internal fun matchesQueuedVideo(identity: DownloadIdentity, existing: ExportRecord, id: String): Boolean {
+    if (id == identity.key) return true
+    val other = existing.identity ?: return false
+    return other.isSiteDownload && other.anime.session == identity.anime.session && other.episode.session == identity.episode.session &&
+        (identity.quality == "Best" || identity.quality == other.quality || identity.quality == existing.quality)
+}
+
 /** Recovery actions must match the source context required by their implementation. */
 internal fun downloadRecoveryEligibility(record: ExportRecord?): DownloadRecoveryEligibility {
-    val identity = record?.identity
-    val siteDownload = identity?.isSiteDownload == true
-    return DownloadRecoveryEligibility(
-        retryable = siteDownload && !identity?.locator.isNullOrBlank(),
-        transferControllable = siteDownload && record?.media != null
-    )
+    val identity = record?.identity?.takeIf { it.isSiteDownload } ?: return DownloadRecoveryEligibility(false, false)
+    val canResolve = !identity.locator.isNullOrBlank()
+    return DownloadRecoveryEligibility(retryable = canResolve, transferControllable = canResolve || record.media != null)
 }
 
 internal fun classifyFailure(message: String): FailureReason = when {

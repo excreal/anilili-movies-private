@@ -28,11 +28,11 @@ class DownloadGroupProgressTest {
         assertFalse(downloadGroupProgress(listOf(row("paused", transfer = TransferState.PAUSED))).running)
         assertEquals("Paused", downloadGroupProgress(listOf(row("paused", transfer = TransferState.PAUSED))).label)
     }
-    @Test fun savedGroupCanStillBePreparingAdditionalLinks() {
+    @Test fun savedGroupCanStillBeAddingItems() {
         val saved = listOf(row("saved", availability = Availability.SAVED))
         assertEquals("Saved", downloadGroupProgress(saved).label)
-        assertEquals("Preparing links", downloadGroupProgress(saved, preparingLinks = true).label)
-        assertTrue(downloadGroupProgress(saved, preparingLinks = true).running)
+        assertEquals("Adding to queue", downloadGroupProgress(saved, addingToQueue = true).label)
+        assertTrue(downloadGroupProgress(saved, addingToQueue = true).running)
     }
 
     @Test fun hlsUsesSelectedTrackSamplesInsteadOfAnUnverifiedTransferTotal() {
@@ -41,8 +41,19 @@ class DownloadGroupProgressTest {
         assertNull(projectHlsTrackSize(60_000_000, 1_000_000, 30_000_000))
         val projected = projectHlsTrackSize(60_000_000, 30_000_000, 250_000_000)
         assertEquals(500_000_000L, projected)
-        assertEquals(50f, estimatedTransferProgress(22.7f, 250_000_000, projected!!), 0.01f)
-        assertEquals(99f, estimatedTransferProgress(99f, 500_000_000, projected), 0.01f)
+        assertEquals(95f, mediaCoverageProgress(47f, 95f), 0.01f)
+        assertEquals(99f, mediaCoverageProgress(99f, 100f), 0.01f)
         assertEquals(-1f, normalizedProgress(Float.NaN), 0.01f)
+    }
+
+    @Test fun savedOutputEstimateUsesComparableEpisodesAndCanBeSmallerThanTransferredBytes() {
+        val first = ExportRecord("Episode 11", "", "", uri = "content://video/11", bytes = 197_000_000,
+            sourceBytes = 213_000_000, durationUs = 1_200_000_000)
+        val second = first.copy(uri = "content://video/12", bytes = 157_000_000, sourceBytes = 169_000_000)
+        val early = HlsTransferSample(15f, null, 1_000_000_000)
+        assertEquals(-1L, estimateSavedHlsSize(early, listOf(first)))
+        assertTrue(estimateSavedHlsSize(early, listOf(first, second)) in 130_000_000..165_000_000)
+        val late = HlsTransferSample(95f, 172_000_000, 1_000_000_000)
+        assertTrue(estimateSavedHlsSize(late, listOf(first, second)) in 157_000_000..163_000_000)
     }
 }

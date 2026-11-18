@@ -19,7 +19,7 @@ internal data class ExportRecord(val title: String, val tree: String, val folder
     val thumbnail: String? = null, val audio: String? = null, val quality: String? = null,
     val showTitle: String? = null, val episodeNumber: String? = null,
     val identity: DownloadIdentity? = null, val pendingUri: String? = null,
-    val media: ResolvedMedia? = null)
+    val media: ResolvedMedia? = null, val sourceBytes: Long = 0L, val durationUs: Long = 0L)
 
 internal data class ExportProgress(val stage: String, val percent: Float, val bytes: Long = 0, val totalBytes: Long = -1) {
     companion object {
@@ -335,7 +335,8 @@ class ExportService : Service() {
                 if (!Exports.all(this).containsKey(id) || Exports.deleting(id)) throw CancellationException("Download was removed")
                 createdSubtitleSidecars = publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
                 withContext(Dispatchers.IO) { destination.publish() }
-                Exports.put(this, id, record.copy(uri = destination.uri.toString(), bytes = bytes, pendingUri = null))
+                Exports.put(this, id, record.copy(uri = destination.uri.toString(), bytes = bytes, pendingUri = null,
+                    sourceBytes = hlsSource?.mediaBytes ?: 0L, durationUs = hlsSource?.durationUs ?: 0L))
                 DownloadStore.flush()
                 outputPublished = true
                 DebugTrace.event("export_assembled", "elapsed_ms" to android.os.SystemClock.elapsedRealtime() - started, "bytes" to bytes)
@@ -391,7 +392,8 @@ class ExportService : Service() {
         val download = OfflineDownloads.manager(this).downloadIndex.getDownload(id)
             ?: error("Cached media is unavailable. Retry download.")
         require(download.state == Download.STATE_COMPLETED) { "Download is not complete" }
-        copyCachedProgressive(OfflineDownloads.cache, download.request, download.contentLength, destination, progress)
+        val actual = download.request.forResolvedMedia(Exports.all(this)[id]?.media)
+        copyCachedProgressive(OfflineDownloads.cache, actual, download.contentLength, destination, progress)
     }
 
     private class ExistingVideoFound(val video: ExistingVideo) : java.io.IOException("The requested video is already saved.")

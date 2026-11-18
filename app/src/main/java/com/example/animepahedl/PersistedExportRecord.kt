@@ -28,7 +28,9 @@ internal fun parsePersistedExportRecord(json: String): ExportRecord? = runCatchi
         episodeNumber = value.string("episodeNumber"),
         identity = identity,
         pendingUri = value.string("pendingUri"),
-        media = value.get("media")?.objectOrNull()?.media(identity)
+        media = value.get("media")?.objectOrNull()?.media(identity),
+        sourceBytes = value.nonnegativeLong("sourceBytes"),
+        durationUs = value.nonnegativeLong("durationUs")
     )
 }.getOrNull()
 
@@ -38,6 +40,7 @@ private fun JsonElement.stringOrNull(): String? =
     takeIf { isJsonPrimitive && asJsonPrimitive.isString }?.asString
 
 private fun JsonObject.string(name: String): String? = get(name)?.stringOrNull()
+private fun JsonObject.nonnegativeLong(name: String): Long = runCatching { get(name)?.asLong }.getOrNull()?.coerceAtLeast(0L) ?: 0L
 
 private fun JsonObject.identity(fallbackTitle: String): DownloadIdentity? {
     val anime = get("anime")?.objectOrNull() ?: return null

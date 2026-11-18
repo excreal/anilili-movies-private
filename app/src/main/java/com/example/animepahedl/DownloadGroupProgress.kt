@@ -4,7 +4,7 @@ internal data class DownloadGroupProgress(val label: String, val percent: Float?
     val running: Boolean = false, val failed: Boolean = false)
 
 /** Saved episodes do not dilute the progress of the episodes currently being processed. */
-internal fun downloadGroupProgress(rows: List<DownloadRow>, preparingLinks: Boolean = false): DownloadGroupProgress {
+internal fun downloadGroupProgress(rows: List<DownloadRow>, addingToQueue: Boolean = false): DownloadGroupProgress {
     fun progress(items: List<DownloadRow>, label: String, useBytes: Boolean = false): DownloadGroupProgress {
         val percent = when {
             useBytes && items.all { displayTransferTotal(it.bytes, it.totalBytes, hls = false) > 0 } ->
@@ -24,13 +24,14 @@ internal fun downloadGroupProgress(rows: List<DownloadRow>, preparingLinks: Bool
         }
         return progress(saving.filter { it.save == phase }, when (phase) {
             SaveState.COPYING -> "Saving"
-            SaveState.CHECKING -> "Checking video"
-            else -> "Preparing video"
+            SaveState.CHECKING -> "Checking"
+            else -> "Processing"
         })
     }
     val downloading = working.filter { it.transfer == TransferState.DOWNLOADING }
     if (downloading.isNotEmpty()) return progress(downloading, "Downloading", useBytes = true)
-    if (preparingLinks) return DownloadGroupProgress("Preparing links", running = true)
+    if (working.any { it.transfer == TransferState.RESOLVING }) return DownloadGroupProgress("Getting link", running = true)
+    if (addingToQueue) return DownloadGroupProgress("Adding to queue", running = true)
     return when {
         working.any { it.transfer == TransferState.WAITING_NETWORK } -> DownloadGroupProgress("Waiting for network")
         working.any { it.save == SaveState.WAITING } -> DownloadGroupProgress("Waiting to save")

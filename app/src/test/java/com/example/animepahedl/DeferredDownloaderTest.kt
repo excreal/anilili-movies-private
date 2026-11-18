@@ -10,10 +10,13 @@ import kotlin.concurrent.thread
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class DeferredDownloaderTest {
-    private class Fake : Downloader {
+    private class Fake(private val failure: Exception? = null) : Downloader {
         var downloads = 0
         var cancelled = false
-        override fun download(progressListener: Downloader.ProgressListener?) { downloads++ }
+        override fun download(progressListener: Downloader.ProgressListener?) {
+            downloads++
+            failure?.let { throw it }
+        }
         override fun cancel() { cancelled = true }
         override fun remove() = Unit
     }
@@ -36,6 +39,29 @@ class DeferredDownloaderTest {
         var removed = false
         DeferredDownloader({ error("Missing metadata or folder permission") }, { removed = true }).remove()
         assertTrue(removed)
+    }
+
+    @Test fun expiredUrlIsRefreshedOnlyInsideTheRunningTransfer() {
+        val expired = java.io.IOException("expired")
+        val original = Fake(expired)
+        val replacement = Fake()
+        var resolutions = 0
+        val item = DeferredDownloader({ resolutions++; original }, {}, { resolutions++; replacement }) { it === expired }
+        assertEquals(0, resolutions)
+        item.download(null)
+        assertEquals(2, resolutions)
+        assertEquals(1, original.downloads)
+        assertEquals(1, replacement.downloads)
+    }
+
+    @Test fun aSecondExpiredUrlFailsWithoutAnotherRefresh() {
+        val expired = java.io.IOException("expired")
+        var refreshes = 0
+        val item = DeferredDownloader({ Fake(expired) }, {}, { refreshes++; Fake(expired) }) { it === expired }
+        repeat(2) {
+            try { item.download(null); fail("Expected expired URL failure") } catch (_: MediaLinkExpired) { }
+        }
+        assertEquals(1, refreshes)
     }
 
     @Test fun cancellationBeforeSetupDoesNotStartDownload() {

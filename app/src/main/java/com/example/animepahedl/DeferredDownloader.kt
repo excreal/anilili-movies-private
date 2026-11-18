@@ -2,6 +2,8 @@ package com.example.animepahedl
 
 import androidx.media3.exoplayer.offline.Downloader
 
+internal class MediaLinkExpired(cause: Exception) : IllegalStateException("Link expired", cause)
+
 /** Keep fallible setup inside Media3's task, where exceptions fail one item.
  * createDownloader itself runs on the manager's handler and must not do that work.
  */
@@ -9,17 +11,37 @@ import androidx.media3.exoplayer.offline.Downloader
 internal class DeferredDownloader(
     private val create: () -> Downloader,
     private val removeCached: () -> Unit,
+    private val refresh: (() -> Downloader)? = null,
+    private val expired: (Exception) -> Boolean = { false },
 ) : Downloader {
     private val lock = Any()
     private var delegate: Downloader? = null
     private var cancelled = false
+    private var refreshed = false
 
     override fun download(progressListener: Downloader.ProgressListener?) {
+        try {
+            currentOrCreate(create).download(progressListener)
+        } catch (failure: Exception) {
+            val renew = refresh ?: throw failure
+            if (!expired(failure)) throw failure
+            if (refreshed) throw MediaLinkExpired(failure)
+            refreshed = true
+            synchronized(lock) { delegate = null }
+            try { currentOrCreate(renew).download(progressListener) }
+            catch (next: Exception) {
+                if (expired(next)) throw MediaLinkExpired(next)
+                throw next
+            }
+        }
+    }
+
+    private fun currentOrCreate(factory: () -> Downloader): Downloader {
         val existing = synchronized(lock) {
             if (cancelled) throw InterruptedException()
             delegate
         }
-        val downloader = existing ?: create().also { created ->
+        return existing ?: factory().also { created ->
             synchronized(lock) {
                 if (cancelled) {
                     created.cancel()
@@ -28,7 +50,6 @@ internal class DeferredDownloader(
                 delegate = created
             }
         }
-        downloader.download(progressListener)
     }
 
     override fun cancel() {

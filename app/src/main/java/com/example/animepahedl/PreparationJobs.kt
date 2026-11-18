@@ -110,11 +110,12 @@ internal object PreparationJobs {
                 val folder = key in folders
                 val running = job?.state == WorkInfo.State.RUNNING && job.progress.getString("rowId") != null && !paused && verification == null && !folder
                 val label = when {
-                    folder -> "Choose downloads folder"
-                    paused -> errors[key] ?: "Preparation paused"
-                    verification != null -> "Session verification needed"
-                    running -> "Preparing download link"
-                    else -> errors[key] ?: "Waiting to prepare link"
+                    folder -> "Choose folder"
+                    paused -> if (key in errors) "Couldn’t queue" else "Paused"
+                    verification != null -> "Verify session"
+                    running -> "Adding to queue"
+                    key in errors -> "Retrying soon"
+                    else -> "Queued"
                 }
                 key.removePrefix(ITEM_PREFIX) to PreparationStatus(true, paused, label, verification, folder, 1, running,
                     job?.progress?.getString("rowId"))
@@ -123,7 +124,7 @@ internal object PreparationJobs {
         })
     }.retryWhen { failure, _ ->
         if (failure !is Exception || failure is CancellationException) false else {
-            emit(PreparationStatus(DownloadStore.operations("preparation").isNotEmpty(), paused = true, label = "Waiting for preparation storage"))
+            emit(PreparationStatus(DownloadStore.operations("preparation").isNotEmpty(), paused = true, label = "Storage unavailable"))
             delay(30_000)
             true
         }
@@ -245,8 +246,7 @@ internal object PreparationJobs {
             val retry = failures < 3
             DownloadStore.operation(slot, "preparation-failures", failures.toString())
             DownloadStore.operation(slot, "preparation-error", if (retry)
-                "Link preparation failed · retry $failures/2 scheduled"
-                else "Could not prepare this link after 3 attempts. Resume to retry.")
+                "Retrying soon" else "Couldn’t queue")
             if (!retry) DownloadStore.operation(slot, "preparation-paused", "1")
             DownloadStore.flush()
             retry
@@ -278,7 +278,7 @@ internal object PreparationJobs {
         for (slot in itemSlots()) lock(slot).withLock {
             if (payload(slot)?.let(::parseSiteDownloadPreparation) == null) {
                 DownloadStore.operation(slot, "preparation-paused", "1")
-                DownloadStore.operation(slot, "preparation-error", "Could not read this preparation journal")
+                DownloadStore.operation(slot, "preparation-error", "Couldn’t queue")
                 DownloadStore.flush()
                 return@withLock
             }
@@ -296,8 +296,6 @@ internal object PreparationJobs {
         val request = OneTimeWorkRequestBuilder<PreparationWorker>()
             .setInputData(workDataOf("slot" to slot, "generation" to generation(slot)))
             .addTag(ITEM_TAG).addTag(slot).addTag(generation(slot).orEmpty())
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(
-                if (AppSettings(context).unmeteredOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
@@ -313,12 +311,12 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
     private val notificationId get() = 1000 + (slot.hashCode() and 0x3fffffff)
     companion object { private val permits = kotlinx.coroutines.sync.Semaphore(2) }
 
-    override suspend fun getForegroundInfo(): ForegroundInfo = foreground("Preparing download links")
+    override suspend fun getForegroundInfo(): ForegroundInfo = foreground("Adding to queue")
     private fun foreground(label: String): ForegroundInfo {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("preparation", "Preparing download links", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("preparation", "Download queue", NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(applicationContext, "preparation")
-            .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Preparing download links")
+            .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Adding to queue")
             .setContentText(label).setContentIntent(downloadsPendingIntent(applicationContext))
             .setOnlyAlertOnce(true).setOngoing(true).build()
         return ForegroundInfo(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -342,7 +340,6 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
             setForeground(getForegroundInfo())
             withContext(Dispatchers.IO) {
                 OfflineDownloads.prepareCache(applicationContext)
-                reconcileDirectEnqueues(applicationContext)
             }
             val raw = PreparationJobs.payload(slot) ?: return Result.success()
             val record = parseSiteDownloadPreparation(raw) ?: return failedAttempt()
@@ -371,12 +368,11 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
         adoptExistingVideo(applicationContext, identity, found, outputTree)
         return true
     }
-    private suspend fun enqueue(identity: DownloadIdentity, media: ResolvedMedia) {
+    private suspend fun enqueue(identity: DownloadIdentity) {
         val context = applicationContext
-        if (reuseExisting(identity)) return
         currentCoroutineContext().ensureActive()
         if (!PreparationJobs.active(slot, token)) throw CancellationException("Preparation paused or replaced")
-        AndroidDownloadRepository(context).enqueue(identity, media)
+        AndroidDownloadRepository(context).enqueue(identity)
     }
     private suspend fun failedAttempt(): Result =
         if (PreparationJobs.failed(slot, token)) Result.retry() else Result.success()
@@ -398,14 +394,10 @@ class PreparationWorker(context: Context, parameters: WorkerParameters) : Corout
     private suspend fun prepareSites(record: SiteDownloadPreparation): Result {
         val batch = record.batches().single()
         val episode = batch.episodes.single()
-        val cookies = SiteDownloadCookieStore(applicationContext)
-        val repository = appSiteDownloadRepository(cookieHeader = cookies::headerFor)
-        progress("Preparing ${batch.series.title} · Episode ${episode.displayNumber}", pendingEpisodeRowId(batch.series, episode, batch.quality))
+        progress(batch.series.title, pendingEpisodeRowId(batch.series, episode, batch.quality))
         if (!attempt {
-            if (batch.quality == "Best" || !reuseExisting(DownloadIdentity.siteDownload(batch.series, episode, batch.quality, "und"))) {
-                val media = cookies.applyTo(repository.resolve(episode.url, batch.quality, cookies.headerFor(episode.url)))
-                enqueue(DownloadIdentity.siteDownload(batch.series, episode, media.quality, media.audio), media)
-            }
+            val identity = DownloadIdentity.siteDownload(batch.series, episode, batch.quality, "und")
+            if (batch.quality == "Best" || !reuseExisting(identity)) enqueue(identity)
         }) return failedAttempt()
         PreparationJobs.save(slot, token, null)
         return Result.success()
