@@ -219,8 +219,19 @@ internal fun parseEroticMvMetadataFeed(xml: String, url: String): MetadataPage {
             }.forEach { element.removeAttr(it.key) } }
         }
         raw.addProperty("contentHtml", safeContent.body().html())
-        val paragraphs = body.select("p").map { it.text() }.filter { it.isNotBlank() && !it.startsWith("The post ") }
+        // The published RSS includes the complete voting widget before the synopsis. Keep its
+        // rating below, but remove its text and the separate alias paragraph from the overview.
+        val descriptionBody = body.clone().apply {
+            select("script,style,form,[class*=yasr],.star-rating,.rating,.ratings,.advertisement").remove()
+        }
+        val aliasPattern = Regex("(?i)^(?:also\\s+known\\s+as|aka)\\s*:?\\s*(.+)$")
+        val contentParagraphs = descriptionBody.select("p").map { it.text().trim() }
+        val aliases = contentParagraphs.mapNotNull { aliasPattern.matchEntire(it)?.groupValues?.get(1) }
+            .flatMap { it.split(Regex("\\s*[,;]\\s*")) }.filter(String::isNotBlank).distinct()
+        val paragraphs = contentParagraphs.filterNot { aliasPattern.matches(it) }
+            .map(::cleanEroticDescription).filter { it.isNotBlank() && !it.startsWith("The post ", true) }
         MetadataRecord(id, link, field("title"), description = paragraphs.joinToString("\n").takeIf(String::isNotBlank),
+            alternativeTitles = aliases,
             images = body.select("img").flatMap { eroticImages(it, "content-image") },
             categories = item.getElementsByTag("category").map { MetadataTerm(it.text()) }, ratings = eroticRatings(body),
             people = listOfNotNull(field("dc:creator").takeIf(String::isNotBlank)?.let { MetadataPerson(it, "uploader") }),
@@ -341,12 +352,20 @@ private fun eroticTerm(link: Element): MetadataTerm? {
 }
 private fun eroticSiteUrl(raw: String): String? = runCatching { raw.toHttpUrl() }.getOrNull()?.takeIf {
     it.isHttps && it.host in setOf("eroticmv.com", "www.eroticmv.com") && it.username.isEmpty() && it.password.isEmpty() &&
-        it.queryParameterNames.all { name -> name in setOf("s", "archive_query", "alphabet_filter", "paged") } && it.fragment == null
+        safeEroticQuery(it) && it.fragment == null
 }?.toString()
 private fun safeEroticInputUrl(raw: String): Boolean = runCatching { raw.toHttpUrl() }.getOrNull()?.let {
     it.isHttps && it.host in setOf("eroticmv.com", "www.eroticmv.com") && it.username.isEmpty() && it.password.isEmpty() && it.fragment == null &&
-        it.queryParameterNames.all { name -> name in setOf("s", "archive_query", "alphabet_filter", "paged") }
+        safeEroticQuery(it)
 } == true
+private fun safeEroticQuery(url: okhttp3.HttpUrl): Boolean {
+    if (!url.queryParameterNames.all { name -> name in setOf("s", "archive_query", "alphabet_filter", "paged", "category_name") }) return false
+    if ("category_name" !in url.queryParameterNames) return true
+    if (url.queryParameterValues("category_name").size != 1) return false
+    val category = url.queryParameter("category_name") ?: return false
+    return url.pathSegments.firstOrNull() == "category" && url.pathSegments.lastOrNull { it.isNotBlank() } == category &&
+        category.matches(Regex("[\\p{L}\\p{N}_.~-]+"))
+}
 private fun absoluteErotic(base: String, raw: String): String? = raw.takeIf(String::isNotBlank)?.let { base.toHttpUrl().resolve(it) }
     ?.takeIf { it.scheme in setOf("http", "https") && it.username.isEmpty() && it.password.isEmpty() }?.toString()
 private fun eroticImages(image: Element, role: String): List<MetadataImage> = buildList {

@@ -6,11 +6,24 @@ enum class Availability { STAGING, SAVED }
 enum class DownloadAction { PAUSE, RESUME, RETRY, RETRY_SAVE, VERIFY, DELETE }
 enum class FailureReason { NETWORK, VERIFICATION, EXPIRED_SOURCE, STORAGE_FULL, FOLDER_ACCESS, INCOMPATIBLE_EXPORT, DELETION, UNKNOWN }
 
+internal fun normalizedProgress(percent: Float): Float = if (percent.isFinite() && percent >= 0) percent.coerceAtMost(100f) else -1f
+
+internal fun byteProgress(bytes: Long, total: Long): Float =
+    if (bytes >= 0 && total > 0) normalizedProgress((bytes.toDouble() * 100 / total).toFloat()) else -1f
+
+// An HLS transfer contains segment framing and may include overlapping or clipped byte ranges.
+internal fun displayTransferTotal(bytes: Long, reportedTotal: Long, hls: Boolean): Long =
+    if (!hls && reportedTotal > 0 && bytes in 0..reportedTotal) reportedTotal else -1L
+
+internal fun estimatedTransferProgress(reported: Float, bytes: Long, estimate: Long): Float =
+    if (estimate > 0 && bytes > 0) byteProgress(bytes, estimate).coerceAtMost(99f) else normalizedProgress(reported)
+
 data class DownloadRow(val id: String, val title: String, val transfer: TransferState, val percent: Float,
     val bytes: Long = 0, val totalBytes: Long = -1, val savedUri: String = "",
     val thumbnail: String = "", val audioCode: String? = null, val quality: String? = null,
     val save: SaveState = SaveState.NONE, val availability: Availability = Availability.STAGING,
-    val failure: FailureReason? = null, val explanation: String? = null, val deleting: Boolean = false, val showId: String = "", val episodeId: String = "", val showTitle: String = "", val episodeNumber: String = "") {
+    val failure: FailureReason? = null, val explanation: String? = null, val deleting: Boolean = false, val showId: String = "", val episodeId: String = "", val showTitle: String = "", val episodeNumber: String = "", val retryable: Boolean = false, val transferControllable: Boolean = false,
+    val estimatedTotalBytes: Long = -1L) {
     val complete get() = availability == Availability.SAVED
     val saving get() = save in setOf(SaveState.WAITING, SaveState.PREPARING, SaveState.CHECKING, SaveState.COPYING)
     val failed get() = transfer == TransferState.FAILED || save == SaveState.FAILED || failure != null
@@ -19,8 +32,8 @@ data class DownloadRow(val id: String, val title: String, val transfer: Transfer
         if (deleting) return@buildSet
         if (failure == FailureReason.VERIFICATION) add(DownloadAction.VERIFY)
         if (save == SaveState.FAILED) add(DownloadAction.RETRY_SAVE)
-        else if (transfer == TransferState.FAILED && !complete) add(DownloadAction.RETRY)
-        if (!id.startsWith("direct:") && !complete && save == SaveState.NONE && failure == null) {
+        else if (transfer == TransferState.FAILED && !complete && retryable) add(DownloadAction.RETRY)
+        if (transferControllable && !id.startsWith("direct:") && !complete && save == SaveState.NONE && failure == null) {
             if (transfer == TransferState.PAUSED) add(DownloadAction.RESUME)
             if (transfer in setOf(TransferState.QUEUED, TransferState.DOWNLOADING, TransferState.WAITING_NETWORK)) add(DownloadAction.PAUSE)
         }
@@ -63,6 +76,18 @@ internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val
                 quality, audio, "sites", episode.url)
         }
     }
+}
+
+internal data class DownloadRecoveryEligibility(val retryable: Boolean, val transferControllable: Boolean)
+
+/** Recovery actions must match the source context required by their implementation. */
+internal fun downloadRecoveryEligibility(record: ExportRecord?): DownloadRecoveryEligibility {
+    val identity = record?.identity
+    val siteDownload = identity?.isSiteDownload == true
+    return DownloadRecoveryEligibility(
+        retryable = siteDownload && !identity?.locator.isNullOrBlank(),
+        transferControllable = siteDownload && record?.media != null
+    )
 }
 
 internal fun classifyFailure(message: String): FailureReason = when {

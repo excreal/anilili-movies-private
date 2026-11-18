@@ -74,6 +74,39 @@ class EroticMvMetadataFixtureTest {
         assertEquals(listOf("Good"), result.items.map { it.title })
     }
 
+    @Test fun publishedFeedSeparatesSynopsisAliasAndVisitorRating() {
+        // Sanitized shape of https://eroticmv.com/feed/ (HTTP 200, 2026-11-18).
+        val xml = """<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>
+          <item><title>Sample Film (2024)</title><link>https://eroticmv.com/sample-film-2024/</link>
+            <guid>https://eroticmv.com/?p=42</guid><content:encoded><![CDATA[
+              <div class="yasr-visitor-votes"><div class="yasr-custom-text-vv-before">Click to rate this post!</div>
+                <div class="yasr-rater-stars-vv" data-rating="4.2" data-rater-nonce="private">
+                </div><span id="yasr-vv-votes-number-container-42">7</span>
+                <p>[Total: 7 Average: 4.2]</p>
+              </div>
+              <p><strong>Also known as: </strong>Sample Alternative</p>
+              <p><strong>Description: </strong>A published synopsis &amp; its second sentence.</p>
+              <p>&nbsp;</p><p>The post Sample Film appeared first on Erotic Movies.</p>
+            ]]></content:encoded>
+          </item>
+          <item><title>No synopsis</title><link>https://eroticmv.com/no-synopsis/</link>
+            <content:encoded><![CDATA[<p>[Total: 0 Average: 0]</p><p>&nbsp;</p>
+            <p>The post No synopsis appeared first on Erotic Movies.</p>]]></content:encoded>
+          </item>
+        </channel></rss>"""
+
+        val records = parseEroticMvMetadataFeed(xml, "https://eroticmv.com/feed/").items
+        val movie = records.first()
+        assertEquals("42", movie.id)
+        assertEquals("A published synopsis & its second sentence.", movie.description)
+        assertEquals(listOf("Sample Alternative"), movie.alternativeTitles)
+        assertEquals(4.2, movie.ratings.single().value!!, 0.001)
+        assertEquals(7L, movie.ratings.single().votes)
+        assertFalse(movie.payloads.single().json.contains("private"))
+        assertNull(records.last().description)
+        assertEquals(0.0, records.last().ratings.single().value!!, 0.001)
+    }
+
     @Test fun encodedKoreanPersonRoutesAreAcceptedButEncodedSeparatorsAreRejected() {
         assertTrue(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "actor", "https://eroticmv.com/actor/yeon-joo/"))
         assertTrue(isSafeMetadataFilterRoute(CatalogSource.EROTICMV, "director", "https://eroticmv.com/director/choi-jung-ja-%EC%B5%9C%EC%A0%95%EC%9E%90/"))

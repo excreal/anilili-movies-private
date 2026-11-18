@@ -7,6 +7,15 @@ import org.junit.Test
 import java.io.File
 
 class SafeDeletionTest {
+    @Test fun externalStorageChecksParentsWithoutLeavingGrantedFolder() {
+        assertEquals(listOf("primary:Download/Movies/Show" to "primary:Download/Movies/Show/Video.mp4",
+            "primary:Download/Movies" to "primary:Download/Movies/Show"),
+            externalStorageAncestors("primary:Download/Movies", "primary:Download/Movies/Show/Video.mp4"))
+        assertEquals(listOf("SD:" to "SD:Video.mp4"), externalStorageAncestors("SD:", "SD:Video.mp4"))
+        assertTrue(externalStorageAncestors("primary:Download/Movies", "primary:Download/Movies 2/Video.mp4").isEmpty())
+        assertTrue(externalStorageAncestors("primary:Download/Movies", "primary:Download/Movies/../Video.mp4").isEmpty())
+        assertTrue(externalStorageAncestors("primary:Download/Movies", "primary:Download/Movies").isEmpty())
+    }
     @Test fun matchesOnlySameBasenameSubtitleSidecarsIgnoringCase() {
         assertTrue(isOutputSubtitleSidecar("The Show - Episode 1.srt", "The Show - Episode 1.mp4"))
         assertTrue(isOutputSubtitleSidecar("the show - episode 1.VTT", "The Show - Episode 1.mp4"))

@@ -134,15 +134,15 @@ internal class KisskhApi(
             .addQueryParameter("err", "false").addQueryParameter("ts", "null").addQueryParameter("time", "null")
             .addQueryParameter("kkey", kisskhRequestKey(episodeId)).build()
         val body = json(target).asJsonObject
-        val media = body.jsonString("Video").takeIf { it.isNotBlank() } ?: body.jsonString("Video_tmp")
-        val parsed = kisskhPlayableVideoUrl(media)
+        val parsed = sequenceOf("Video", "Video_tmp").map { body.jsonString(it) }
+            .mapNotNull(::kisskhPlayableVideoUrl).firstOrNull()
         require(parsed != null) {
             "This KissKH episode has no playable video. Try another episode."
         }
         val captions = if (includeSubtitles) try { subtitles(episodeId) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { emptyList() } else emptyList()
-        return listOf(MediaVariant(media, subtitles = captions, headers = mapOf("Referer" to "https://kisskh.do/"),
+        return listOf(MediaVariant(parsed.toString(), subtitles = captions, headers = mapOf("Referer" to "https://kisskh.do/"),
             mimeType = if (isHlsMedia(parsed)) "application/x-mpegURL" else "video/mp4"))
     }
 }

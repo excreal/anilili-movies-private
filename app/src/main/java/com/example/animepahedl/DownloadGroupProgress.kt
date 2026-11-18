@@ -7,9 +7,9 @@ internal data class DownloadGroupProgress(val label: String, val percent: Float?
 internal fun downloadGroupProgress(rows: List<DownloadRow>, preparingLinks: Boolean = false): DownloadGroupProgress {
     fun progress(items: List<DownloadRow>, label: String, useBytes: Boolean = false): DownloadGroupProgress {
         val percent = when {
-            useBytes && items.all { it.totalBytes > 0 } ->
+            useBytes && items.all { displayTransferTotal(it.bytes, it.totalBytes, hls = false) > 0 } ->
                 (items.sumOf { it.bytes.toDouble() } * 100 / items.sumOf { it.totalBytes.toDouble() }).toFloat()
-            items.all { it.percent.isFinite() && it.percent >= 0 } -> items.map { it.percent }.average().toFloat()
+            items.all { normalizedProgress(it.percent) >= 0 } -> items.map { normalizedProgress(it.percent) }.average().toFloat()
             else -> null
         }?.coerceIn(0f, 100f)
         return DownloadGroupProgress(label, percent, running = true)

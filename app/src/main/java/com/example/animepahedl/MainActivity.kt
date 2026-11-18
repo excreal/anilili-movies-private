@@ -159,22 +159,15 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
     }
     var remoteEpisode by remember { mutableStateOf<String?>(null) }
     var errorDetails by remember { mutableStateOf(false) }
-    var removeId by remember { mutableStateOf<String?>(null) }
-    var confirmBulkDelete by remember { mutableStateOf(false) }
+    var removeRow by remember { mutableStateOf<DownloadRow?>(null) }
+    var bulkDeleteRows by remember { mutableStateOf<List<DownloadRow>?>(null) }
     var bulkMenu by remember { mutableStateOf(false) }
-    var enqueueAfterFolder by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val displayedDownloads = remember(model.downloads, siteDownload.pending, siteDownload.preparationStatus) { siteDownload.libraryRows(model.downloads) }
     val outputPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        val action = enqueueAfterFolder
-        enqueueAfterFolder = null
-        if (uri != null) model.chooseOutputTree(uri) {
-            if (action == "sites") siteDownload.downloadSelected()
-            if (action == "player") siteDownload.resumePreparation()
-        }
+        if (uri != null) model.chooseOutputTree(uri)
     }
-    fun chooseOutputFolder(action: String? = null) {
-        enqueueAfterFolder = action
+    fun chooseOutputFolder() {
         val initial = model.outputTree.takeIf { it.isNotBlank() }?.toUri() ?: android.provider.DocumentsContract.buildDocumentUri(
             "com.android.externalstorage.documents", "primary:Download/${model.outputFolder}")
         outputPicker.launch(initial)
@@ -224,7 +217,8 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                         }) {
                             AppSymbol(AppIcon.Check, description = "Select all downloads")
                         }
-                        IconButton(onClick = { confirmBulkDelete = true }, enabled = model.selectedDownloadIds.isNotEmpty() && !model.deletingDownloads) {
+                        IconButton(onClick = { bulkDeleteRows = displayedDownloads.filter { it.id in model.selectedDownloadIds } },
+                            enabled = displayedDownloads.any { it.id in model.selectedDownloadIds } && !model.deletingDownloads) {
                             AppSymbol(AppIcon.Delete, description = "Delete selected downloads")
                         }
                         Box {
@@ -235,10 +229,9 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                                     DownloadAction.RETRY to "Retry failed", DownloadAction.RETRY_SAVE to "Retry saves").forEach { (action, label) ->
                                     if (selected.any { action in it.actions }) DropdownMenuItem(text = { Text(label) }, onClick = {
                                         bulkMenu = false
-                                        if (selected.any { siteDownload.isPendingRow(it.id) && action in it.actions }) {
-                                            val id = selected.first { siteDownload.isPendingRow(it.id) }.id
-                                            if (action == DownloadAction.PAUSE) siteDownload.pausePending(id)
-                                            if (action == DownloadAction.RESUME) siteDownload.resumePending(id)
+                                        selected.filter { siteDownload.isPendingRow(it.id) && action in it.actions }.forEach { row ->
+                                            if (action == DownloadAction.PAUSE) siteDownload.pausePending(row.id)
+                                            if (action == DownloadAction.RESUME) siteDownload.resumePending(row.id)
                                         }
                                         if (selected.any { !siteDownload.isPendingRow(it.id) && action in it.actions }) model.performSelectionAction(action)
                                     })
@@ -301,7 +294,7 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                 model.showSettings -> SettingsScreen(model, onAbout = { model.showAbout = true }, siteDownload = siteDownload)
                 model.showDownloads -> screenState.SaveableStateProvider("downloads") { DownloadsScreen(model, siteDownload, images, onChooseFolder = { chooseOutputFolder() }, onPlay = { row ->
                     playingSaved = row
-                }, onRemove = { removeId = it }) }
+                }, onRemove = { removeRow = it }) }
                 showHistory -> LibraryScreen(savedShows, continueWatching, images,
                     onDetails = { series -> showHistory = false; siteDownload.updateInput(series.url); siteDownload.inspect(series.posterThumbnail()); showLinkDetails = true },
                     onResume = { series -> remoteEpisode = null; playingRemote = series },
@@ -317,7 +310,7 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
                         saved = remember(savedRevision, siteDownload.series) { siteDownload.series?.let(savedShows::contains) == true },
                         onToggleSave = { siteDownload.series?.let(savedShows::toggle) }, onWatch = { remoteEpisode = null; playingRemote = siteDownload.series }, onWatchEpisode = { id -> remoteEpisode = id; playingRemote = siteDownload.series }, onEnqueue = {
                         if (model.outputAccessGranted && !model.outputCheckRequired) { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); true }
-                        else { chooseOutputFolder("sites"); false }
+                        else { siteDownload.downloadSelected(); chooseOutputFolder(); false }
                     }, onExploreMetadata = { kind, term ->
                         siteDownload.series?.let { catalog.explore(it.provider, kind, term) }
                         showLinkDetails = false
@@ -333,9 +326,9 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
             playingSaved = null; playingRemote = null; referenceRequest = null; model.showDownloads = true
         } else if (siteDownload.downloadEpisode(series, episode)) {
             if (model.outputAccessGranted && !model.outputCheckRequired) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            else chooseOutputFolder("player")
+            else chooseOutputFolder()
             android.widget.Toast.makeText(context, "Episode added to Downloads", android.widget.Toast.LENGTH_SHORT).show()
-        } else android.widget.Toast.makeText(context, "A download batch is being prepared. Manage it in Downloads.", android.widget.Toast.LENGTH_LONG).show()
+        } else android.widget.Toast.makeText(context, "Downloads aren’t ready yet. Try again in a moment.", android.widget.Toast.LENGTH_LONG).show()
     }
     playingSaved?.let { initial ->
         val savedRecords = remember(model.downloads) { DownloadStore.all() }
@@ -357,25 +350,27 @@ private fun DownloaderApp(model: DownloaderViewModel, siteDownload: SiteDownload
     }
     referenceRequest?.let { request -> ReferenceVideoPlayer(request.series, "Best", onClose = { referenceRequest = null; historyRevision++ },
         initialId = request.episodeId, downloadedOnly = request.offline, onDownload = ::downloadFromPlayer) }
-    if (confirmBulkDelete) {
-        val selected = displayedDownloads.filter { it.id in model.selectedDownloadIds }
-        AlertDialog(onDismissRequest = { confirmBulkDelete = false }, title = { Text("Delete ${selected.size} items?") },
+    bulkDeleteRows?.let { selected ->
+        AlertDialog(onDismissRequest = { bulkDeleteRows = null }, title = { Text("Delete ${selected.size} items?") },
             text = { Text("This deletes ${selected.count { it.complete }} saved videos and cancels ${selected.count { !it.complete }} unfinished downloads.") },
-            confirmButton = { TextButton(onClick = { confirmBulkDelete = false; siteDownload.removePending(selected.filter { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet()); model.removeDownloads(selected.filterNot { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet(), selected.filter { it.complete }.map { it.id }.toSet()) }, enabled = selected.isNotEmpty()) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { confirmBulkDelete = false }) { Text("Keep") } })
+            confirmButton = { TextButton(onClick = { bulkDeleteRows = null; siteDownload.removePending(selected.filter { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet()); model.removeDownloads(selected.filterNot { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet(), selected.filter { it.complete }.map { it.id }.toSet()) }, enabled = selected.isNotEmpty() && !model.deletingDownloads) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { bulkDeleteRows = null }) { Text("Keep") } })
     }
     if (errorDetails) AlertDialog(onDismissRequest = { errorDetails = false }, title = { Text(androidx.compose.ui.res.stringResource(R.string.ui_request_details)) },
         text = { Text(model.error.orEmpty(), Modifier.verticalScroll(rememberScrollState())) }, confirmButton = { TextButton(onClick = { errorDetails = false }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_close)) } })
     model.verification?.let { url -> SessionBrowser(url, onClose = model::closeVerification) }
-    removeId?.let { id ->
-        val row = displayedDownloads.firstOrNull { it.id == id }
-        AlertDialog(onDismissRequest = { removeId = null },
-            title = { Text(if (row?.complete == true) "Delete saved video?" else "Cancel download?") },
-            text = { Text("${row?.title.orEmpty()}\n\n${if (row?.complete == true) "This permanently deletes the saved video." else "This cancels the download and removes its partial files."}") },
-            confirmButton = { TextButton(onClick = { if (siteDownload.isPendingRow(id)) siteDownload.removePending(setOf(id)) else model.removeDownload(id, deleteSavedFile = row?.complete == true); removeId = null }) {
-                Text(if (row?.complete == true) "Delete" else "Cancel download")
+    removeRow?.let { row ->
+        AlertDialog(onDismissRequest = { removeRow = null },
+            title = { Text(if (row.complete) "Delete saved video?" else "Cancel download?") },
+            text = { Text("${row.title}\n\n${if (row.complete) "This permanently deletes the saved video." else "This cancels the download and removes its partial files."}") },
+            confirmButton = { TextButton(enabled = !model.deletingDownloads, onClick = {
+                if (siteDownload.isPendingRow(row.id)) siteDownload.removePending(setOf(row.id))
+                else model.removeDownload(row.id, deleteSavedFile = row.complete)
+                removeRow = null
+            }) {
+                Text(if (row.complete) "Delete" else "Cancel download")
             } },
-            dismissButton = { TextButton(onClick = { removeId = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_keep)) } })
+            dismissButton = { TextButton(onClick = { removeRow = null }) { Text(androidx.compose.ui.res.stringResource(R.string.ui_keep)) } })
     }
 }
 

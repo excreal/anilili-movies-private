@@ -26,12 +26,12 @@ import androidx.media3.common.MimeTypes
  * documentation says must be survivable, and it refuses some pairs outright — measured 2026-09-20,
  * it answers 500 with an empty body for a `megaplay.buzz` referer carrying a target on another host,
  * which is exactly the pair anikoto produces (`fetch.nexabloom.top`). A receiver handed that fetches
- * the 500 and reports nothing but `STATE_IDLE`, so the caller asks first ([proxyProbeUrl]) and
- * passes the answer in as `proxyServing`.
+ * the 500 and reports nothing but `STATE_IDLE`, so the caller preflights the stream and each
+ * sidecar URL with the receiver's Origin before publishing them.
  *
  * Since some point after 2026-09-20 it also allowlists the request's `Origin` to miruro's own
- * sites, which a receiver page can never send — so for casting it now refuses everything, and the
- * caller's question has to be asked with a receiver's Origin to hear that (see
+ * sites, which a receiver page can never send — so for casting it may refuse a particular route,
+ * and the caller's question has to be asked with a receiver's Origin to hear that (see
  * `PlaybackService.receiverCanFetch`).
  *
  * The original items are kept by the caller and restored on the way back, so a local player never
@@ -39,6 +39,10 @@ import androidx.media3.common.MimeTypes
  * the stream URL the player screen prepared, which is enough to undo the address change.
  */
 internal object CastStreamRouting {
+
+    internal data class ProxyProbeUrls(val stream: String?, val subtitles: List<String>) {
+        fun all(): List<String> = listOfNotNull(stream) + subtitles
+    }
 
     /**
      * Whether a receiver could play this queue at all, before any question of what it can reach.
@@ -60,48 +64,43 @@ internal object CastStreamRouting {
         items.isNotEmpty() && playlistKey == null
 
     /**
-     * The one address worth asking [StreamCorsProxy] about before handing this queue over, or null
-     * when nothing in it would go through the proxy.
-     *
-     * The stream when the provider named a referer, because that is the address the episode cannot
-     * start without; otherwise the first WebVTT track, which on an ungated source is the only thing
-     * the detour is carrying. Reading the first item alone is enough — this app hands a receiver one
-     * episode, and every handover on record is `items=1`.
+     * The gated stream and each WebVTT sidecar that will use the proxy. Testing them individually
+     * matters because a proxy that accepts the stream can refuse a subtitle on another host, and
+     * one refused receiver track can prevent the whole load. This app hands a receiver one episode.
      */
-    fun proxyProbeUrl(items: List<MediaItem>, referer: String?): String? {
-        val item = items.firstOrNull() ?: return null
-        val config = item.localConfiguration ?: return null
+    fun proxyProbeUrls(items: List<MediaItem>, referer: String?): ProxyProbeUrls {
+        val item = items.firstOrNull() ?: return ProxyProbeUrls(null, emptyList())
+        val config = item.localConfiguration ?: return ProxyProbeUrls(null, emptyList())
         val source = config.uri.toString()
         val seed = item.mediaId.takeIf { it.isNotBlank() } ?: source
-        referer?.takeIf(String::isNotBlank)
+        val stream = referer?.takeIf(String::isNotBlank)
             ?.let { StreamCorsProxy.playlist(source, it, seed) }
-            ?.let { return it }
-        return config.subtitleConfigurations
-            .firstOrNull { it.mimeType?.equals(MimeTypes.TEXT_VTT, ignoreCase = true) == true }
-            ?.let { StreamCorsProxy.subtitle(it.uri.toString(), referer, seed) }
+        val subtitles = config.subtitleConfigurations
+            .filter { it.mimeType?.equals(MimeTypes.TEXT_VTT, ignoreCase = true) == true }
+            .mapNotNull { StreamCorsProxy.subtitle(it.uri.toString(), referer, seed) }
+        return ProxyProbeUrls(stream, subtitles)
     }
 
     /**
      * The queue to hand a receiver, or [items] unchanged when nothing in it needs the proxy.
      *
-     * [proxyServing] is the answer to [proxyProbeUrl] — false means the proxy refused the address
-     * this was about to publish, and the detour is then worse than no detour: the receiver would
-     * fetch a 500 and report the silent load failure this whole file exists to avoid. So the
-     * addresses go over as they stand, which is exactly what an ungated source casts with today.
+     * [proxyServingUrls] contains the addresses the preflight confirmed. A refused stream remains
+     * direct, as before; a refused WebVTT sidecar is omitted so it cannot fail the receiver load.
      */
-    fun castItems(items: List<MediaItem>, referer: String?, proxyServing: Boolean): List<MediaItem> =
-        items.map { castItem(it, referer, proxyServing) }
+    fun castItems(items: List<MediaItem>, referer: String?, proxyServingUrls: Set<String>): List<MediaItem> =
+        items.map { castItem(it, referer, proxyServingUrls) }
 
     /** The queue to hand back to the local player, undoing [castItems] by URL. */
     fun localItems(items: List<MediaItem>): List<MediaItem> = items.map(::restoreLocalItem)
 
-    private fun castItem(item: MediaItem, referer: String?, proxyServing: Boolean): MediaItem {
+    private fun castItem(item: MediaItem, referer: String?, proxyServingUrls: Set<String>): MediaItem {
         val source = item.localConfiguration?.uri?.toString() ?: return item
         val seed = item.mediaId.takeIf { it.isNotBlank() } ?: source
         val original = item.localConfiguration?.subtitleConfigurations.orEmpty()
         // A gated stream is the only one worth the detour; see the class comment.
-        val streamUrl = referer?.takeIf { it.isNotBlank() && proxyServing }
+        val streamUrl = referer?.takeIf(String::isNotBlank)
             ?.let { StreamCorsProxy.playlist(source, it, seed) }
+            ?.takeIf { it in proxyServingUrls }
         val subtitles = original.mapNotNull { subtitle ->
             val isVtt = subtitle.mimeType?.equals(MimeTypes.TEXT_VTT, ignoreCase = true) == true
             if (!isVtt) return@mapNotNull subtitle
@@ -109,9 +108,9 @@ internal object CastStreamRouting {
             // there is no knowing whether its host answers a receiver, and Google's receiver fails
             // the whole load over one track it cannot fetch — so the track goes rather than the
             // episode. In-manifest renditions are untouched, and the picture is what was asked for.
-            if (!proxyServing) return@mapNotNull null
             val proxied = StreamCorsProxy.subtitle(subtitle.uri.toString(), referer, seed)
                 ?: return@mapNotNull subtitle
+            if (proxied !in proxyServingUrls) return@mapNotNull null
             subtitle.buildUpon().setUri(Uri.parse(proxied)).build()
         }
         if (streamUrl == null && subtitles == original) return item

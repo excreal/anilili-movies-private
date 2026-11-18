@@ -41,7 +41,7 @@ class SiteDownloadSourcesTest {
     @Test fun encodedMediaAndHtmlEntities() {
         val raw = "https://cdn.test/video.m3u8?x=1&y=2"
         assertEquals(raw, decodeEroticMedia("http://${Base64.getEncoder().encodeToString(raw.toByteArray())}.m3u8"))
-        assertEquals(raw, eroticVideoSource("""<meta content="https://cdn.test/video.m3u8?x=1&amp;y=2" property="og:video:url">"""))
-        assertEquals("https://cdn.test/a.m3u8", eroticVideoSource("""<script>{"single_video_url":"https:\/\/cdn.test\/a.m3u8"}</script>"""))
+        assertEquals(raw, eroticVideoSource("""<meta content="https://cdn.test/video.m3u8?x=1&amp;y=2" property="og:video:url">""")?.url)
+        assertEquals("https://cdn.test/a.m3u8", eroticVideoSource("""<script>{"single_video_url":"https:\/\/cdn.test\/a.m3u8"}</script>""")?.url)
     }
 }

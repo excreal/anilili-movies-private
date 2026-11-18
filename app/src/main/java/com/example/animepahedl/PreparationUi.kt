@@ -16,13 +16,16 @@ internal fun PreparationStatusRow(status: PreparationStatus, remaining: Int, onP
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (status.automatic) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
         else AppSymbol(AppIcon.Download, Modifier.size(18.dp))
-        Text((if (status.totalSelected > 0) "${status.totalSelected} episodes queued · " else "") + (if (status.automatic) "$remaining remaining to prepare" else status.label), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+        Text(if (status.items.isNotEmpty()) status.label else
+            (if (status.totalSelected > 0) "${status.totalSelected} episodes queued · " else "") +
+                (if (status.automatic) "$remaining remaining to prepare" else status.label), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (status.needsFolderAccess && onChooseFolder != null) {
             IconButton(onClick = onChooseFolder) { AppSymbol(AppIcon.Folder, description = "Choose existing downloads folder") }
         } else if (status.verificationUrl != null && onVerify != null) {
             IconButton(onClick = onVerify) { AppSymbol(AppIcon.Shield, description = "Verify session") }
-        } else IconButton(onClick = if (status.automatic) onPause else onResume) {
+        }
+        IconButton(onClick = if (status.automatic) onPause else onResume) {
             AppSymbol(if (status.automatic) AppIcon.Pause else AppIcon.Play,
                 description = if (status.automatic) "Pause preparation" else "Resume preparation")
         }

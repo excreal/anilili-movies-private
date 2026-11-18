@@ -43,8 +43,12 @@ import com.anilili.ui.nav.Routes
 import com.anilili.data.remote.LegacyTrustAnchors.withLegacyTrustAnchors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
@@ -122,13 +126,13 @@ class PlaybackService : MediaSessionService() {
     private var remoteRouteEverReady = false
 
     /**
-     * Whether [StreamCorsProxy] answered for the address this handover was about to publish.
+     * Whether [StreamCorsProxy] answered for the stream address this handover was about to publish.
      *
-     * Resolved once per handover by [handOverToReceiver] and read by [switchPlaybackPlayer], rather
-     * than probed inside the switch: setting a player's queue is main-thread work and asking a
-     * third-party host anything is not.
+     * Resolved by [handOverToReceiver] and read by [switchPlaybackPlayer], rather than probed
+     * inside the switch. Sidecar results are kept separately so a refused subtitle can be omitted.
      */
     private var castProxyServing = true
+    private var castProxyServingUrls: Set<String> = emptySet()
 
     /**
      * Whether a receiver is connected, as the availability callbacks report it.
@@ -138,6 +142,8 @@ class PlaybackService : MediaSessionService() {
      * there. `CastPlayer` would accept the queue either way and simply hold it.
      */
     private var castSessionAvailable = false
+    private var castHandoverGeneration = 0L
+    private var castProbeJob: Job? = null
 
     /**
      * Asks the edge proxy for headers only, sharing the transport client's DNS and trust anchors.
@@ -448,6 +454,9 @@ class PlaybackService : MediaSessionService() {
                 },
                 onUnavailable = {
                     castSessionAvailable = false
+                    castHandoverGeneration++
+                    castProbeJob?.cancel()
+                    castProbeJob = null
                     switchPlaybackPlayer(cast, player, localEpisodeAwarePlayer)
                 },
             )
@@ -600,22 +609,35 @@ class PlaybackService : MediaSessionService() {
      * so now beats the load watchdog saying it fifteen seconds later.
      */
     private fun handOverToReceiver(from: Player, to: Player, sessionPlayer: Player) {
+        val generation = ++castHandoverGeneration
+        castProbeJob?.cancel()
+        castProbeJob = null
         val outgoing = List(from.mediaItemCount) { from.getMediaItemAt(it) }
-        if (!CastStreamRouting.canCastQueue(outgoing, activePlaylistKey)) {
+        val playlistKey = activePlaylistKey
+        val referer = activeReferer
+        if (!CastStreamRouting.canCastQueue(outgoing, playlistKey)) {
             declineCast("items=${outgoing.size} keyedPlaylist=${activePlaylistKey != null}")
             return
         }
-        val probeUrl = CastStreamRouting.proxyProbeUrl(outgoing, activeReferer)
-        if (probeUrl == null) {
+        val probes = CastStreamRouting.proxyProbeUrls(outgoing, referer)
+        if (probes.all().isEmpty()) {
             castProxyServing = true
+            castProxyServingUrls = emptySet()
             switchPlaybackPlayer(from, to, sessionPlayer)
             return
         }
         val directUrl = outgoing.first().localConfiguration?.uri?.toString()
-        val gated = activeReferer != null
+        val gated = referer != null
         val progressive = activeProgressive
-        transportScope.launch {
-            val serving = receiverCanFetch(probeUrl, needsCors = true) ?: true
+        castProbeJob = transportScope.launch {
+            // Probe all stream/sidecar routes concurrently: the slowest request, not the number
+            // of subtitle tracks, bounds the handover delay.
+            val probeResults = coroutineScope {
+                probes.all().distinct().map { url ->
+                    async { url to (receiverCanFetch(url, needsCors = true) ?: true) }
+                }.awaitAll().toMap()
+            }
+            val serving = probes.stream?.let { probeResults[it] ?: true } ?: true
             if (!serving) {
                 DiagnosticsLog.event(
                     "PlaybackService cast address refused by the proxy; handing the receiver the direct address",
@@ -625,12 +647,18 @@ class PlaybackService : MediaSessionService() {
             val directRefused = !serving && gated && directUrl != null &&
                 receiverCanFetch(directUrl, needsCors = !progressive) == false
             mainHandler.post {
-                if (!castSessionAvailable || activePlayer === to) return@post
+                if (generation != castHandoverGeneration || !castSessionAvailable || activePlayer === to) return@post
+                val current = List(from.mediaItemCount) { from.getMediaItemAt(it) }
+                if (current != outgoing || activeReferer != referer || activePlaylistKey != playlistKey || activeProgressive != progressive) {
+                    handOverToReceiver(from, to, sessionPlayer)
+                    return@post
+                }
                 if (directRefused) {
                     declineCast("gated=true proxyServing=false directRefused=true")
                     return@post
                 }
                 castProxyServing = serving
+                castProxyServingUrls = probeResults.filterValues { it }.keys
                 switchPlaybackPlayer(from, to, sessionPlayer)
             }
         }
@@ -693,7 +721,7 @@ class PlaybackService : MediaSessionService() {
             localRouteItems = outgoing
             localRoutePositionMs = from.currentPosition.coerceAtLeast(0L)
             remoteRouteEverReady = false
-            CastStreamRouting.castItems(outgoing, activeReferer, castProxyServing)
+            CastStreamRouting.castItems(outgoing, activeReferer, castProxyServingUrls)
         } else {
             val snapshot = localRouteItems
             localRouteItems = null
@@ -873,6 +901,9 @@ class PlaybackService : MediaSessionService() {
             shutdownCronet.also { shutdownCronet = null }
         }
         transportScope.cancel()
+        castHandoverGeneration++
+        castProbeJob?.cancel()
+        castProbeJob = null
         sleepTimerScope.cancel()
         runCatching { closeCronet?.invoke() }
         playbackCacheBypass.end()

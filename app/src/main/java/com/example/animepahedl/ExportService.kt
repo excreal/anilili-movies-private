@@ -21,7 +21,26 @@ internal data class ExportRecord(val title: String, val tree: String, val folder
     val identity: DownloadIdentity? = null, val pendingUri: String? = null,
     val media: ResolvedMedia? = null)
 
-internal data class ExportProgress(val stage: String, val percent: Float, val bytes: Long = 0)
+internal data class ExportProgress(val stage: String, val percent: Float, val bytes: Long = 0, val totalBytes: Long = -1) {
+    companion object {
+        fun forBytes(stage: String, bytes: Long, total: Long): ExportProgress {
+            val knownTotal = displayTransferTotal(bytes, total, hls = false)
+            return ExportProgress(stage, byteProgress(bytes, knownTotal), bytes, knownTotal)
+        }
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun exportTransferReady(context: Context, index: androidx.media3.exoplayer.offline.DownloadIndex, id: String): Boolean {
+    if (!id.startsWith("direct:")) return index.getDownload(id)?.state == Download.STATE_COMPLETED
+    val number = id.removePrefix("direct:").toLongOrNull() ?: return false
+    // A legacy provider failure must not block exports of other completed transfers.
+    return runCatching {
+        context.getSystemService(DownloadManager::class.java).query(DownloadManager.Query().setFilterById(number))?.use {
+            it.moveToFirst() && it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL
+        } == true
+    }.getOrDefault(false)
+}
 
 internal object Exports {
     val progress = java.util.concurrent.ConcurrentHashMap<String, ExportProgress>()
@@ -65,14 +84,25 @@ internal object Exports {
     fun cancel(context: Context, id: String) { jobs[id]?.cancel() }
     fun register(id: String, job: Job) { jobs[id] = job }
     fun unregister(id: String) { jobs.remove(id) }
-    fun start(context: Context) {
-        if (!hasOutputFolderAccess(context) || DownloadStore.operations("folder-access")["transfers"] != null) return
-        runCatching { context.startForegroundService(Intent(context, ExportService::class.java)) }
-            .onFailure { failure ->
-                all(context).filter { (id, record) -> record.uri.isEmpty() && !deleting(id) }.forEach { (id, record) ->
-                    put(context, id, record.copy(error = "Saving could not start. Reopen the app and tap Retry save. ${failure.javaClass.simpleName}"))
-                }
-            }
+    fun start(context: Context): Boolean {
+        if (!hasOutputFolderAccess(context) || DownloadStore.operationValue("transfers", "folder-access") != null) return false
+        return try {
+            context.startForegroundService(Intent(context, ExportService::class.java))
+            true
+        } catch (failure: Exception) {
+            // Android may deny a background start. A foreground retry can still save the cache.
+            DebugTrace.event("export_start_deferred", "type" to failure.javaClass.simpleName)
+            false
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    suspend fun resumeReady(context: Context) {
+        if (!hasOutputFolderAccess(context) || DownloadStore.operationValue("transfers", "folder-access") != null) return
+        val pending = all(context).filter { (id, record) -> record.uri.isEmpty() && record.error.isEmpty() && !deleting(id) }
+        if (pending.isEmpty()) return
+        val index = withContext(Dispatchers.Main.immediate) { OfflineDownloads.manager(context).downloadIndex }
+        if (withContext(Dispatchers.IO) { pending.keys.any { exportTransferReady(context, index, it) } }) start(context)
     }
 }
 
@@ -99,6 +129,7 @@ class ExportService : Service() {
     private var running: Job? = null
     private var activeExport: Job? = null
     private var activeExportId: String? = null
+    private var latestStartId = 0
     private var lastNotificationUpdate = 0L
     private var lastNotificationStage = ""
 
@@ -119,7 +150,7 @@ class ExportService : Service() {
     }
 
     private fun savingNotification(progress: ExportProgress? = null): Notification {
-        val percent = progress?.percent?.takeIf { it >= 0 }?.toInt()?.coerceIn(0, 100)
+        val percent = progress?.percent?.let(::normalizedProgress)?.takeIf { it >= 0 }?.toInt()
         val stage = progress?.stage?.let(::friendlyDownloadStatus) ?: "Waiting to save"
         return NotificationCompat.Builder(this, "exports")
             .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(activeExportId?.let { Exports.all(this)[it]?.title } ?: "Saving video")
@@ -134,72 +165,71 @@ class ExportService : Service() {
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) {
-            if (activeExportId == intent.getStringExtra(EXTRA_ID)) activeExport?.cancel()
-            return START_NOT_STICKY
-        }
+        latestStartId = startId
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel("exports", "Saving videos", NotificationManager.IMPORTANCE_LOW))
         startForeground(2, savingNotification())
         if (running?.isActive != true) running = scope.launch {
-            DownloadStore.awaitReady()
             try {
+                DownloadStore.awaitReady()
+                val index = OfflineDownloads.manager(this@ExportService).downloadIndex
                 var idleChecks = 0
                 while (isActive) {
+                    val checkedStartId = latestStartId
                     DownloadStore.flush()
                     val pending = (if (DownloadStore.operations("folder-access")["transfers"] != null) emptyMap() else Exports.all(this@ExportService)).filter { (id, record) -> record.uri.isEmpty() && record.error.isEmpty() && !Exports.deleting(id) }
-                    val next = withContext(Dispatchers.IO) { QueueOrder.ordered(this@ExportService, pending.keys.toList()).firstOrNull { ready(it) }?.let { pending.entries.first { entry -> entry.key == it } } }
+                    val next = withContext(Dispatchers.IO) {
+                        QueueOrder.ordered(this@ExportService, pending.keys.toList()).firstOrNull { id ->
+                            id in pending && exportTransferReady(this@ExportService, index, id)
+                        }
+                    }
                     if (next != null) {
                         idleChecks = 0
-                        activeExportId = next.key
-                        activeExport = scope.launch(start = CoroutineStart.LAZY) {
-                            Exports.withItemLock(next.key) {
-                                if (!Exports.deleting(next.key)) export(next.key, Exports.all(this@ExportService)[next.key] ?: return@withItemLock)
+                        activeExportId = next
+                        val job = scope.launch(start = CoroutineStart.LAZY) {
+                            Exports.withItemLock(next) {
+                                val record = Exports.all(this@ExportService)[next] ?: return@withItemLock
+                                if (record.uri.isEmpty() && record.error.isEmpty() && !Exports.deleting(next)) export(next, record)
                             }
                         }
-                        Exports.register(next.key, activeExport!!)
-                        activeExport?.start()
-                        activeExport?.join()
-                        Exports.unregister(next.key)
-                        activeExport = null
-                        activeExportId = null
+                        activeExport = job
+                        Exports.register(next, job)
+                        try {
+                            job.start()
+                            job.join()
+                        } finally {
+                            Exports.unregister(next)
+                            activeExport = null
+                            activeExportId = null
+                        }
+                    } else if (checkedStartId != latestStartId) {
+                        idleChecks = 0
                     } else if (pending.isNotEmpty() && idleChecks++ < 5) {
                         delay(1000)
                     } else break
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { DebugTrace.event("export_service_deferred", "type" to e.javaClass.simpleName) }
-            finally { stopSelf() }
+            finally { stopSelfResult(latestStartId) }
         }
         return START_NOT_STICKY
     }
-    private fun ready(id: String): Boolean {
-        if (!id.startsWith("direct:")) return OfflineDownloads.manager(this).downloadIndex.getDownload(id)?.state == Download.STATE_COMPLETED
-        val manager = getSystemService(DownloadManager::class.java)
-        return manager.query(DownloadManager.Query().setFilterById(id.removePrefix("direct:").toLong())).use {
-            it.moveToFirst() && it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL
-        }
-    }
-    private fun downloading(id: String): Boolean {
-        if (!id.startsWith("direct:")) return OfflineDownloads.manager(this).downloadIndex.getDownload(id)?.state in
-            listOf(Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING)
-        return getSystemService(DownloadManager::class.java).query(DownloadManager.Query().setFilterById(id.removePrefix("direct:").toLong())).use {
-            it.moveToFirst() && it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) in
-                listOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
-        }
-    }
     private suspend fun export(id: String, original: ExportRecord) {
         var record = original
-        // A foreground notification alone does not keep the CPU running with the screen off.
-        wakeLock.acquire(95 * 60_000L)
-        val temp = withContext(Dispatchers.IO) {
-            File(getExternalFilesDir(null) ?: filesDir, "export-temp").apply { mkdirs() }
-                .resolve("${id.hashCode().toUInt()}.mp4")
-        }
+        var tempFile: File? = null
+        var acquiredWakeLock = false
         var pendingOutput: OutputDocument? = null
         var outputPublished = false
         var createdSubtitleSidecars = emptyList<Uri>()
         try {
+            wakeLock.acquire(95 * 60_000L)
+            acquiredWakeLock = true
+            val temp = withContext(Dispatchers.IO) {
+                File(getExternalFilesDir(null) ?: filesDir, "export-temp").apply {
+                    check(isDirectory || mkdirs() || isDirectory) { "Could not create temporary video directory" }
+                }.resolve("${id.hashCode().toUInt()}.mp4")
+            }
+            tempFile = temp
             val tree = record.tree.takeIf { hasOutputFolderAccess(this, it) } ?: AppSettings(this).outputTree
             if (!hasOutputFolderAccess(this, tree)) throw OutputFolderAccessRequired()
             record = record.copy(tree = tree)
@@ -225,11 +255,19 @@ class ExportService : Service() {
             }
             val existing = withContext(Dispatchers.IO) { findExistingOutput(this@ExportService, record.tree, record.outputLocation("mp4")) }
             if (existing != null) throw ExistingVideoFound(existing)
-            val estimated = if (id.startsWith("direct:")) 0L else withContext(Dispatchers.IO) { OfflineDownloads.manager(this@ExportService).downloadIndex.getDownload(id)?.bytesDownloaded ?: 0L }
-            val available = withContext(Dispatchers.IO) { android.os.StatFs(temp.parentFile!!.absolutePath).availableBytes }
-            require(estimated <= 0 || available > estimated * if (record.tree.isBlank()) 2 else 1) { "Not enough space for assembly and final copy. Free storage and Retry save." }
             val direct = id.startsWith("direct:")
             val progressive = !direct && record.identity?.isSiteDownload == true && record.media?.isHls() == false
+            val index = OfflineDownloads.manager(this).downloadIndex
+            val hlsSource = if (direct || progressive) null else withContext(Dispatchers.IO) {
+                requireCachedHlsSegments(this@ExportService, id)
+            }
+            val stagedBytes = when {
+                hlsSource != null -> hlsSource.mediaBytes
+                direct -> 0L
+                else -> withContext(Dispatchers.IO) { index.getDownload(id)?.bytesDownloaded ?: 0L }
+            }
+            val available = withContext(Dispatchers.IO) { android.os.StatFs(temp.parentFile!!.absolutePath).availableBytes }
+            require(stagedBytes <= available / if (record.tree.isBlank()) 2 else 1) { "Not enough space for assembly and final copy. Free storage and Retry save." }
             if (direct || progressive) {
                 val source = when {
                     direct -> getSystemService(DownloadManager::class.java)
@@ -239,7 +277,7 @@ class ExportService : Service() {
                         withExportProgressDeadline(id) { withContext(Dispatchers.IO) {
                             copyCachedProgressive(id, temp) { copied ->
                                 ensureActive()
-                                Exports.setProgress(id, ExportProgress("Preparing video", if (estimated > 0) copied * 100f / estimated else -1f, copied))
+                                Exports.setProgress(id, ExportProgress.forBytes("Preparing video", copied, stagedBytes))
                             }
                         } }
                         Uri.fromFile(temp)
@@ -269,17 +307,20 @@ class ExportService : Service() {
                 DownloadStore.flush()
                 pendingOutput = destination
                 Exports.setProgress(id, ExportProgress("Preparing MP4", -1f))
-                val update: (Int) -> Unit = { Exports.setProgress(id, ExportProgress("Preparing MP4", it.toFloat())) }
                 val started = android.os.SystemClock.elapsedRealtime()
-                withTimeout(30 * 60_000L) { ffmpegRemuxCachedHls(this@ExportService, id, temp, update) }
+                withTimeout(30 * 60_000L) {
+                    ffmpegRemuxCachedHls(this@ExportService, id, temp, hlsSource) {
+                        Exports.setProgress(id, ExportProgress("Preparing MP4", it.percent.toFloat(), it.bytes))
+                    }
+                }
                 val digest = java.security.MessageDigest.getInstance("SHA-256")
                 withExportProgressDeadline(id) {
                     Exports.setProgress(id, ExportProgress("Copying to folder", -1f))
                     withContext(Dispatchers.IO) {
                         java.security.DigestInputStream(temp.inputStream(), digest).use { input -> destination.openOutput().use { output ->
-                            val total = temp.length().coerceAtLeast(1)
+                            val total = temp.length()
                             copyCancellable(input, output) { copied ->
-                                Exports.setProgress(id, ExportProgress("Copying to folder", copied * 100f / total, copied))
+                                Exports.setProgress(id, ExportProgress.forBytes("Copying to folder", copied, total))
                             }
                         } }
                     }
@@ -287,7 +328,9 @@ class ExportService : Service() {
                 val bytes = temp.length()
                 withExportProgressDeadline(id) { withContext(Dispatchers.IO) {
                     Exports.setProgress(id, ExportProgress("Checking saved video", 0f))
-                    verifyCopy(this@ExportService, destination.uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
+                    verifyCopy(this@ExportService, destination.uri, bytes, digest.digest()) { checked ->
+                        Exports.setProgress(id, ExportProgress.forBytes("Checking saved video", checked, bytes))
+                    }
                 } }
                 if (!Exports.all(this).containsKey(id) || Exports.deleting(id)) throw CancellationException("Download was removed")
                 createdSubtitleSidecars = publishSubtitleSidecars(record) { if (Exports.deleting(id)) throw CancellationException("Download was removed") }
@@ -327,7 +370,7 @@ class ExportService : Service() {
             Exports.all(this)[id]?.takeUnless { Exports.deleting(id) }?.let { Exports.put(this, id, it.copy(error = e.message ?: "Could not save video")) }
         } finally {
             Exports.clearProgress(id)
-            withContext(NonCancellable + Dispatchers.IO) {
+            try { withContext(NonCancellable + Dispatchers.IO) {
                 if (!outputPublished) createdSubtitleSidecars.asReversed().forEach { sidecar ->
                     runCatching { deleteOwnedMedia(this@ExportService, sidecar) }
                 }
@@ -336,8 +379,9 @@ class ExportService : Service() {
                         Exports.all(this@ExportService)[id]?.let { Exports.put(this@ExportService, id, it.copy(pendingUri = null)) }
                     }
                 }
-                temp.delete()
-                if (wakeLock.isHeld) wakeLock.release()
+                tempFile?.delete()
+            } } finally {
+                if (acquiredWakeLock && wakeLock.isHeld) wakeLock.release()
             }
         }
     }
@@ -465,14 +509,16 @@ class ExportService : Service() {
                     val total = contentResolver.openAssetFileDescriptor(source, "r")?.use { it.length } ?: -1L
                     copyCancellable(input, output) { copied ->
                         checkActive()
-                        Exports.setProgress(id, ExportProgress("Copying to folder", if (total > 0) copied * 100f / total else -1f, copied))
+                        Exports.setProgress(id, ExportProgress.forBytes("Copying to folder", copied, total))
                     }
                 }
             }
             checkActive()
             require(bytes > 0) { "Output is empty" }
             Exports.setProgress(id, ExportProgress("Checking saved video", 0f))
-            verifyCopy(this@ExportService, uri, bytes, digest.digest()) { checked -> Exports.setProgress(id, ExportProgress("Checking saved video", checked * 100f / bytes, checked)) }
+            verifyCopy(this@ExportService, uri, bytes, digest.digest()) { checked ->
+                Exports.setProgress(id, ExportProgress.forBytes("Checking saved video", checked, bytes))
+            }
             createdSidecars = publishSubtitleSidecars(record, checkActive)
             if (tree == null) require(contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) > 0) { "Output publication failed" }
             return uri to bytes
@@ -563,10 +609,6 @@ class ExportService : Service() {
             throw cancelled
         }
         created.toList()
-    }
-    companion object {
-        const val ACTION_CANCEL = "com.example.animepahedl.CANCEL_EXPORT"
-        const val EXTRA_ID = "export_id"
     }
     override fun onTimeout(startId: Int, fgsType: Int) {
         activeExportId?.let { id -> Exports.all(this)[id]?.let { Exports.put(this, id, it.copy(error = "Android stopped saving after its background time limit. Reopen and tap Retry save; the source is retained.")) } }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -101,11 +105,17 @@ internal fun DownloadReferenceEpisodeRow(
     val secondary = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     Card(shape = shape, colors = CardDefaults.cardColors(
         containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
-        modifier = modifier.fillMaxWidth().clip(shape).combinedClickable(
-            onClickLabel = if (selectionActive) "Select ${episode.title}" else if (episode.playable) "Play offline" else null,
-            onLongClickLabel = "Select episodes", onClick = {
-                if (selectionActive) onToggleSelected() else if (episode.playable) onPlay()
-            }, onLongClick = onToggleSelected)) {
+        modifier = modifier.fillMaxWidth().clip(shape).then(
+            if (selectionActive || episode.playable) Modifier.combinedClickable(
+                onClickLabel = if (selectionActive) "Select ${episode.title}" else "Play offline",
+                onLongClickLabel = "Select episodes", onClick = {
+                    if (selectionActive) onToggleSelected() else onPlay()
+                }, onLongClick = onToggleSelected)
+            else Modifier.pointerInput(episode.title) {
+                detectTapGestures(onLongPress = { onToggleSelected() })
+            }.semantics {
+                onLongClick("Select episodes") { onToggleSelected(); true }
+            })) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(104.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {

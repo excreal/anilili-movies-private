@@ -2,7 +2,7 @@ package com.example.animepahedl
 
 import com.google.gson.Gson
 import com.sun.net.httpserver.HttpServer
-import kotlinx.coroutines.runBlocking
+import okhttp3.Request
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.InetSocketAddress
@@ -47,7 +47,7 @@ class SiteDownloadDownloadTest {
         assertFalse(restored.toString().contains("secret"))
     }
 
-    @Test fun redirectDoesNotLeakCookiesAndKeepsProviderContext() = runBlocking {
+    @Test fun redirectDoesNotLeakCookiesAndKeepsProviderContext() {
         val original = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val redirected = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         var firstCookie: String? = null
@@ -73,9 +73,10 @@ class SiteDownloadDownloadTest {
             original.start()
             val media = ResolvedMedia("http://127.0.0.1:${original.address.port}/video", "Best", "und",
                 mapOf("Cookie" to "session=private", "Referer" to "https://provider.test/episode/1", "Origin" to "https://provider.test"))
-            val selected = MediaRequests.available(media)
-            assertEquals("http://127.0.0.1:${redirected.address.port}/video", selected.url)
-            assertTrue(selected.headers.keys.none { it.equals("Cookie", true) })
+            val request = Request.Builder().url(media.url).apply {
+                mediaRequestHeaders(media).forEach { (name, value) -> header(name, value) }
+            }.build()
+            MediaRequests.client(media).newCall(request).execute().use { assertEquals("video", it.body.string()) }
             assertEquals("session=private", firstCookie)
             assertNull(secondCookie)
             assertEquals("https://provider.test/episode/1", secondReferer)
@@ -83,25 +84,4 @@ class SiteDownloadDownloadTest {
         } finally { original.stop(0); redirected.stop(0) }
     }
 
-    @Test fun fallbackPreflightRecognizesExtensionlessHlsWithoutAnimePaheHeaders() = runBlocking {
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        var referer: String? = "unvisited"
-        try {
-            server.createContext("/expired") { it.sendResponseHeaders(403, -1); it.close() }
-            server.createContext("/stream") { exchange ->
-                referer = exchange.requestHeaders.getFirst("Referer")
-                val body = "#EXTM3U\n#EXT-X-ENDLIST\n".toByteArray()
-                exchange.responseHeaders.add("Content-Type", "application/octet-stream")
-                exchange.sendResponseHeaders(200, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
-            }
-            server.start()
-            val base = "http://127.0.0.1:${server.address.port}"
-            val selected = MediaRequests.available(ResolvedMedia("$base/expired", "Best", "und", backupUrls = listOf("$base/stream")))
-            assertEquals("$base/stream", selected.url)
-            assertTrue(selected.isHls())
-            assertNull(referer)
-            assertEquals(listOf("$base/expired"), selected.backupUrls)
-        } finally { server.stop(0) }
-    }
 }

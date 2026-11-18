@@ -122,14 +122,14 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                         override fun read(buffer: ByteArray, offset: Int, size: Int) = dataSource.read(buffer, offset, size)
                         override fun close() = dataSource.close()
                     }
-                    val peek = java.io.PushbackInputStream(source, 7)
-                    val first = ByteArray(7)
+                    val peek = java.io.PushbackInputStream(source, 10)
+                    val first = ByteArray(10)
                     var count = 0
                     while (count < first.size) { val n = peek.read(first, count, first.size - count); if (n < 0) break; count += n }
                     peek.unread(first, 0, count)
-                    val playlist = count == 7 && String(first, Charsets.UTF_8) == "#EXTM3U"
+                    val playlist = String(first, 0, count, Charsets.UTF_8).removePrefix("\uFEFF").startsWith("#EXTM3U")
                     val data = if (playlist) {
-                        val bytes = peek.readBytesBounded(1024 * 1024)
+                        val bytes = peek.readBytesBounded(4 * 1024 * 1024)
                         // Relative HLS resources are based on the final manifest URL after any
                         // CDN redirect, not necessarily the KissKH/API URL requested initially.
                         val base = URI(dataSource.uri?.toString() ?: uri)
@@ -238,21 +238,16 @@ private fun java.io.InputStream.copyExactly(output: java.io.OutputStream, size: 
 }
 
 /** Cache-span checks only: no network requests, media decoding, or second media scan. */
+internal data class CachedHlsMedia(val durationUs: Long, val mediaBytes: Long)
+
 @androidx.annotation.OptIn(UnstableApi::class)
-internal fun requireCachedHlsSegments(context: Context, id: String): Long {
+internal fun requireCachedHlsSegments(context: Context, id: String): CachedHlsMedia {
     val request = OfflineDownloads.manager(context).downloadIndex.getDownload(id)?.request
         ?: error("Temporary download is unavailable")
     val cache = OfflineDownloads.cache
     val factory = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(null)
-    fun playlist(uri: Uri): androidx.media3.exoplayer.hls.playlist.HlsPlaylist {
-        val source = factory.createDataSource()
-        return DataSourceInputStream(source, DataSpec.Builder().setUri(uri).build()).use {
-            // HlsPlaylistParser uses this URI as the base for relative segments. Preserve the
-            // CDN destination when the source redirected the manifest request.
-            androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser().parse(source.uri ?: uri, it)
-        }
-    }
-    fun resource(base: String, path: String, offset: Long = 0, length: Long = androidx.media3.common.C.LENGTH_UNSET.toLong()) {
+    val record = Exports.all(context)[id]
+    fun resource(base: String, path: String, offset: Long = 0, length: Long = androidx.media3.common.C.LENGTH_UNSET.toLong()): Long {
         val key = androidx.media3.common.util.UriUtil.resolve(base, path)
         val cachedResourceLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key))
         val remainingResourceLength = cachedResourceLength - offset
@@ -272,44 +267,44 @@ internal fun requireCachedHlsSegments(context: Context, id: String): Long {
         require(size > 0 && cache.isCached(key, offset, size)) {
             "Source segment is missing or incomplete; cached media retained. Retry download."
         }
+        return size
     }
-    val manifest = playlist(request.uri)
-    val media = when (manifest) {
-        is androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist -> listOf(manifest)
-        is androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist -> {
-            val selected = if (request.streamKeys.isEmpty()) manifest else manifest.copy(request.streamKeys)
-            selected.mediaPlaylistUrls.map { playlist(it) as androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist }
-        }
-        else -> error("Unsupported playlist")
+    val root = readHlsPlaylist(factory.createDataSource(), request.uri)
+    val keys = request.streamKeys.ifEmpty {
+        if (record?.identity?.isSiteDownload == true) selectedHlsStreamKeys(root, record.quality ?: "Best") else emptyList()
     }
+    val media = cachedHlsMediaPlaylists(root, keys, factory).media
     require(media.isNotEmpty()) { "Selected playlists are missing" }
+    var mediaBytes = 0L
     for (item in media) {
         require(item.hasEndTag && item.segments.isNotEmpty() && item.durationUs > 0) { "Incomplete HLS playlist; cached media retained" }
-        val checked = mutableSetOf<Triple<String, Long, Long>>()
-        fun segment(segment: androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist.Segment) {
-            if (checked.add(Triple(segment.url, segment.byteRangeOffset, segment.byteRangeLength)))
-                resource(item.baseUri, segment.url, segment.byteRangeOffset, segment.byteRangeLength)
+        val checked = mutableMapOf<Triple<String, Long, Long>, Long>()
+        fun segment(segment: androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist.Segment): Long {
             segment.fullSegmentEncryptionKeyUri?.let { key ->
-                if (checked.add(Triple(key, 0L, -1L))) resource(item.baseUri, key)
+                checked.getOrPut(Triple(key, 0L, -1L)) { resource(item.baseUri, key) }
+            }
+            return checked.getOrPut(Triple(segment.url, segment.byteRangeOffset, segment.byteRangeLength)) {
+                resource(item.baseUri, segment.url, segment.byteRangeOffset, segment.byteRangeLength)
             }
         }
         for (entry in item.segments) {
             entry.initializationSegment?.let { segment(it) }
-            segment(entry)
+            mediaBytes = Math.addExact(mediaBytes, segment(entry))
         }
     }
-    return media.first().durationUs
+    return CachedHlsMedia(media.first().durationUs, mediaBytes)
 }
 
 @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
 @androidx.annotation.OptIn(UnstableApi::class)
-internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: File, onProgress: (Int) -> Unit) = withContext(Dispatchers.IO) {
+internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: File, source: CachedHlsMedia? = null,
+    onProgress: (FfmpegProgress) -> Unit) = withContext(Dispatchers.IO) {
     val download = OfflineDownloads.manager(context).downloadIndex.getDownload(id) ?: error("Temporary download is unavailable")
     val executable = File(context.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so")
     require(executable.exists()) { "FFmpeg is available only on arm64 devices" }
     val record = Exports.all(context)[id]
     val siteDownload = record?.identity?.isSiteDownload == true
-    val durationUs = requireCachedHlsSegments(context, id)
+    val durationUs = (source ?: requireCachedHlsSegments(context, id)).durationUs
     DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
     val server = CachedHlsServer(download.request.uri.toString().takeIf { siteDownload }, record?.quality ?: "Best")
     val errors = File(context.cacheDir, "ffmpeg-${id.hashCode().toUInt()}.log")
@@ -319,8 +314,7 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
             "-map", "0:v:0", "-map", if (!siteDownload && record?.audio?.isNotBlank() == true) "0:a:0" else "0:a:0?", "-c", "copy", "-f", "mp4", output.absolutePath)
         val process = ProcessBuilder(args).redirectError(errors).start()
         val lastProgress = java.util.concurrent.atomic.AtomicLong(System.nanoTime())
-        var elapsedBefore = -1L
-        var percentBefore = -1
+        val progress = FfmpegProgressParser(durationUs)
         val watchdog = Executors.newSingleThreadScheduledExecutor()
         val stalled = java.util.concurrent.atomic.AtomicBoolean(false)
         watchdog.scheduleWithFixedDelay({
@@ -330,11 +324,9 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
         try {
             process.inputStream.bufferedReader().useLines { lines -> lines.forEach { line ->
                 coroutineContext.ensureActive()
-                if (line.startsWith("out_time_us=")) {
-                    val elapsed = line.substringAfter('=').toLongOrNull() ?: 0L
-                    if (elapsed > elapsedBefore) { elapsedBefore = elapsed; lastProgress.set(System.nanoTime()) }
-                    val percent = (elapsed * 100 / durationUs).coerceIn(0, 99).toInt()
-                    if (percent > percentBefore) { percentBefore = percent; onProgress(percent) }
+                progress.accept(line)?.let { update ->
+                    lastProgress.set(System.nanoTime())
+                    onProgress(update)
                 }
             } }
             coroutineContext.ensureActive()
@@ -350,7 +342,7 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
             }
             DebugTrace.event("export_duration_verified", "id" to id.hashCode().toUInt().toString(),
                 "expectedMs" to durationUs / 1_000L, "actualMs" to actualDurationMs)
-            onProgress(100)
+            onProgress(FfmpegProgress(durationUs, output.length(), 100))
         } finally { watchdog.shutdownNow(); cancel?.dispose(); if (process.isAlive) process.destroyForcibly() }
     } finally {
         server.close()

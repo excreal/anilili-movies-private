@@ -14,8 +14,9 @@ Implementation and review are complete. Final debug and signed release builds
 succeeded (`./build.sh all`); release vital lint passed. The release-only Gson/R8
 persistence issue was fixed in `app/src/main/keepRules/rules.keep`, and final
 mapping confirms the worker and persisted model names are retained. Both APK
-signatures and bundled ARM64 FFmpeg checksums passed. The release signing
-certificate matches `.signing/animepahedl-release.p12`; ZIP alignment passed.
+signatures and bundled ARM64 FFmpeg checksums passed in that release record.
+The signing certificate was verified at the time; its private files have since
+been removed from the working tree after the audit. ZIP alignment passed.
 Public HTTP resume plus complete-file SHA-256 passed for both published APKs.
 
 No emulator may be installed or started. The server has no GUI or connected
@@ -79,8 +80,10 @@ HLS master remux selection preserves the chosen rendition's external audio.
 
 ## Signing and FFmpeg
 
-- Actual key: `.signing/animepahedl-release.p12`; private env: `.signing/release.env`.
-  Do not print credentials or alter the key. `./build.sh all` loads them.
+- Previously tracked release-signing files were removed from the working tree
+  after the 2026-11-11 audit. Treat them as exposed; rotation and Git history
+  cleanup remain release-owner actions. Configure replacement credentials only
+  through a local secret manager or environment variables.
 - Expected release certificate SHA-256:
   `df6fcad0dd936146c3505209b93cfa10d6ab08e229e021ca705b3743f008a8b5`.
   It was independently exported from that key using keytool with an env password.
@@ -413,7 +416,7 @@ Deviceinteractionstopped. Fulltestmatrix `docs/DEVICE_TEST_REPORT.md`.
 
 ## Current follow-up release
 http://20.120.96.17/builds/app-release-87fa24f49bd3.apk
-Shared online/offline resume, downloaded-first catalog playback with one online fallback, immediate pause saves, two Library rows with exact episode/time/counts, copied Settings index/search, and separately keyed signed Nostr developer notices. Publisher docs: docs/DEVELOPER_NOTICES.md. Private key is ignored in .signing/announcement-key.properties; never publish its contents. No announcement was broadcast. Build/lint and package checks passed; cheaper-model source review found no blockers. Device currently disconnected; no new phone pass claimed.
+Shared online/offline resume, downloaded-first catalog playback with one online fallback, immediate pause saves, two Library rows with exact episode/time/counts, copied Settings index/search, and separately keyed signed Nostr developer notices. Publisher docs: docs/DEVELOPER_NOTICES.md. The previously tracked private publishing key was removed from the current working tree after the 2026-11-11 audit; it must be rotated and history exposure reviewed. No announcement was broadcast. Build/lint and package checks passed; cheaper-model source review found no blockers. Device currently disconnected; no new phone pass claimed.
 
 ## Korean-only KissKH + notice delivery follow-up
 http://20.120.96.17/builds/app-release-c41d8f223cff.apk
@@ -430,3 +433,11 @@ Cheaper verification subagent source review found no blocking progress/PiP/subti
 Signed APK: http://20.120.96.17/builds/app-release-99bae75377e1.apk
 SHA-256: `99bae75377e180836f4a3af7329032d26e9c143cbfbc20bb6b389ea18a19bae3` (22,186,942 bytes).
 Final release compilation and lint passed: `/tmp/android-setup/reference-player-final-release.log`. Certificate, signature, ZIP alignment, unchanged FFmpeg and hosted byte-range download checks passed. Compiled subtitle smoke passed all five sampled live language files and three legacy decoding formats. Device install/playback/visual/PiP/Cast checks remain pending: `adb devices -l` is empty.
+
+## Current Nginx release artifact (2026-11-11)
+Built signed release: `/srv/downloads/builds/app-release-0f88f561b5af.apk`.
+SHA-256: `0f88f561b5af0af89fe4aca4d2520a02c7066be971a5adaf313c225434a8930e`
+(22,334,798 bytes). `/srv/downloads/release/app-release.apk` and
+`/srv/downloads/release.apk` both point to this immutable snapshot. Local Nginx
+returned HTTP 200 for both links. In this executor Nginx runs as a host process;
+the Docker daemon has no running containers.

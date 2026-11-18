@@ -50,7 +50,7 @@ internal object DownloadStore {
                 database.runInTransaction {
                     if (dao.operations().none { it.id == "legacy" && it.kind == "migration" }) {
                         app.getSharedPreferences("exports", Context.MODE_PRIVATE).all.forEach { (id, value) ->
-                            runCatching { gson.fromJson(value.toString(), ExportRecord::class.java) }.getOrNull()?.let {
+                            parsePersistedExportRecord(value.toString())?.let {
                                 dao.importLegacy(StoredDownload(id, gson.toJson(it)))
                             }
                         }
@@ -61,21 +61,25 @@ internal object DownloadStore {
                     }
                 }
                 dao.downloads().forEach { row ->
-                    runCatching { gson.fromJson(row.metadata, ExportRecord::class.java) }.getOrNull()?.let { records.putIfAbsent(row.id, it) }
+                    parsePersistedExportRecord(row.metadata)?.let { records.putIfAbsent(row.id, it) }
                 }
                 dao.operations().forEach { operations.putIfAbsent(it.id to it.kind, it.payload) }
                 ready.complete(Unit)
-            } catch (e: Exception) { ready.completeExceptionally(e) }
+            } catch (e: Exception) {
+                health.value = e.javaClass.simpleName
+                ready.completeExceptionally(e)
+            }
         }
     }
     suspend fun awaitReady() = ready.await()
-    fun all(): Map<String, ExportRecord> = records.toMap()
+    fun all(): Map<String, ExportRecord> = HashMap(records)
     fun operations(kind: String): Map<String, String> = operations.filterKeys { it.second == kind }.mapKeys { it.key.first }
+    fun operationValue(id: String, kind: String): String? = operations[id to kind]
     fun put(id: String, record: ExportRecord) {
         schedule { database.records().put(StoredDownload(id, gson.toJson(record))); records[id] = record }
     }
     fun remove(id: String) { schedule { database.records().remove(id); records.remove(id) } }
-    fun operation(id: String, kind: String, payload: String?) {
+    @Synchronized fun operation(id: String, kind: String, payload: String?) {
         if (payload == null) operations.remove(id to kind) else operations[id to kind] = payload
         schedule {
             if (payload == null) database.records().removeOperation(id, kind)

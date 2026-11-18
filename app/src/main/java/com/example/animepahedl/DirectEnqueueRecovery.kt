@@ -3,8 +3,6 @@ package com.example.animepahedl
 import androidx.core.net.toUri
 import android.app.DownloadManager
 import android.content.Context
-import android.net.Uri
-import com.google.gson.Gson
 
 /** Adopt only destinations named by our durable pre-enqueue journal. */
 internal suspend fun reconcileDirectEnqueues(context: Context) {
@@ -22,7 +20,7 @@ internal suspend fun reconcileDirectEnqueues(context: Context) {
             val number = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
             val id = "direct:$number"
             if (!Exports.all(context).containsKey(id)) {
-                val record = Gson().fromJson(payload, ExportRecord::class.java)
+                val record = parsePersistedExportRecord(payload) ?: continue
                 Exports.put(context, id, record)
                 DownloadStore.operation(number.toString(), "direct", record.title)
                 DownloadStore.flush()

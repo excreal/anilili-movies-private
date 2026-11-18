@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
 import com.example.animepahedl.metadata.SiteMetadataApis
 import com.example.animepahedl.metadata.toAppMetadata
 import kotlinx.coroutines.CancellationException
@@ -15,17 +14,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class SiteDownloadViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application
     private val cookies = SiteDownloadCookieStore(application)
     private val repository = appSiteDownloadRepository(cookieHeader = cookies::headerFor)
     private val metadataApis by lazy { SiteMetadataApis.forApp(application) }
-    private val gson = Gson()
     private var inspectJob: Job? = null
     private var metadataJob: Job? = null
     private var generation = 0
-    private var submitting = false
+    private var submissions = 0
+    private val submissionLock = Mutex()
     var input by mutableStateOf("")
         private set
     var series by mutableStateOf<SiteDownloadSeries?>(null)
@@ -41,6 +42,8 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     var quality by mutableStateOf("Best")
         private set
     var error by mutableStateOf<String?>(null)
+        private set
+    var preparationError by mutableStateOf<String?>(null)
         private set
     var notice by mutableStateOf<String?>(null)
         private set
@@ -63,34 +66,43 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         viewModelScope.launch {
             try {
                 DownloadStore.awaitReady()
-                pending = DownloadStore.operations("preparation")[SITE_DOWNLOAD_PREPARATION_KEY]?.let {
-                    runCatching { gson.fromJson(it, SiteDownloadPreparation::class.java) }.getOrNull()
-                }
+                pending = PreparationJobs.pendingSites()
                 ready = true
-                PreparationJobs.observe(app, PreparationJobs.SITES).collect { status ->
-                    val remaining = PreparationJobs.payload(PreparationJobs.SITES)?.let {
-                        runCatching { gson.fromJson(it, SiteDownloadPreparation::class.java) }.getOrNull()
-                    }
-                    if (submitting && remaining == null) return@collect
+                PreparationJobs.observe(app).collect { status ->
+                    val remaining = PreparationJobs.pendingSites()
+                    if (submissions > 0) return@collect
                     pending = remaining
                     preparationStatus = status
                     preparing = status.automatic
                     preparationLabel = status.label
                 }
-            } catch (_: Exception) { error = "Could not load pending downloads. Reopen the app to try again." }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { preparationError = "Could not load pending downloads. Reopen the app to try again." }
         }
     }
 
     fun libraryRows(actual: List<DownloadRow>): List<DownloadRow> = mergePreparedQueueRows(actual, pending, preparationStatus)
     fun isPendingRow(id: String) = isPreparedQueueRow(id)
-    fun pausePending(id: String) { if (isPendingRow(id)) pausePreparation() }
-    fun resumePending(id: String) { if (isPendingRow(id)) resumePreparation() }
+    fun pausePending(id: String) = changePending(id, resume = false)
+    fun resumePending(id: String) = changePending(id, resume = true)
+    private fun changePending(id: String, resume: Boolean) {
+        if (!isPendingRow(id)) return
+        viewModelScope.launch {
+            preparationError = null
+            try {
+                if (resume) PreparationJobs.resume(app, PreparationJobs.itemSlot(id))
+                else PreparationJobs.pause(app, PreparationJobs.itemSlot(id))
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { preparationError = "Could not update queued episode. Try again." }
+        }
+    }
     fun removePending(ids: Set<String>) {
         if (ids.none(::isPreparedQueueRow)) return
         viewModelScope.launch {
+            preparationError = null
             try { PreparationJobs.removeSiteEpisodes(app, ids) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { error = "Could not remove queued episodes. Try again." }
+            catch (_: Exception) { preparationError = "Could not remove queued episodes. Try again." }
         }
     }
 
@@ -195,6 +207,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     fun clearCookies() { cookies.clear(); hasCookies = false; notice = "Session cookies removed." }
     fun dismissNotice() { notice = null }
     fun dismissError() { error = null }
+    fun dismissPreparationError() { preparationError = null }
     fun downloadEpisode(show: SiteDownloadSeries, episode: SiteDownloadEpisode, selectedQuality: String = "Best"): Boolean {
         if (!ready || discarding) return false
         runPreparation(SiteDownloadPreparation(show, listOf(episode), selectedQuality))
@@ -208,12 +221,12 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
     fun resumePreparation() { if (!discarding) viewModelScope.launch {
         try { PreparationJobs.resume(app, PreparationJobs.SITES) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { error = "Could not resume preparation. Try again." }
+        catch (_: Exception) { preparationError = "Could not resume preparation. Try again." }
     } }
     fun pausePreparation() { viewModelScope.launch {
         try { PreparationJobs.pause(app, PreparationJobs.SITES) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { error = "Could not pause preparation. Try again." }
+        catch (_: Exception) { preparationError = "Could not pause preparation. Try again." }
     } }
     fun discardPreparation() {
         if (discarding || !ready) return
@@ -221,35 +234,39 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
         viewModelScope.launch {
             try { PreparationJobs.discard(app, PreparationJobs.SITES) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { error = "Could not discard preparation. Try again." }
+            catch (_: Exception) { preparationError = "Could not discard preparation. Try again." }
             finally { discarding = false }
         }
     }
     private fun runPreparation(record: SiteDownloadPreparation) {
         if (discarding || !ready) return
-        submitting = true
+        submissions++
         val current = pending
         pending = if (current == null) record else {
-            val existingIds = current.batches().filter { it.series.provider == record.series.provider && it.series.id == record.series.id }
-                .flatMap { it.episodes }.mapTo(mutableSetOf()) { it.id }
-            val additional = record.episodes.filterNot { it.id in existingIds }
-            if (additional.isEmpty()) current else current.copy(
-                queued = current.queued + SiteDownloadBatch(record.series, additional, record.quality))
+            val batches = current.batches()
+            val matching = batches.filter {
+                it.series.provider == record.series.provider && it.series.id == record.series.id && it.quality == record.quality
+            }.flatMap { it.episodes }.mapTo(HashSet()) { it.id }
+            val added = record.episodes.filterNot { it.id in matching }
+            if (added.isEmpty()) current else current.withBatches(batches + SiteDownloadBatch(record.series, added, record.quality))
         }
         preparationStatus = preparationStatus.copy(pending = true,
             label = "${pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size} queued · preparing links in background",
             totalSelected = pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size)
-        error = null
+        preparationError = null
         viewModelScope.launch {
-            try { PreparationJobs.submit(app, PreparationJobs.SITES, record) }
+            try { submissionLock.withLock { PreparationJobs.submit(app, PreparationJobs.SITES, record) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 preparing = false
-                pending = PreparationJobs.payload(PreparationJobs.SITES)?.let {
-                    runCatching { gson.fromJson(it, SiteDownloadPreparation::class.java) }.getOrNull()
+                preparationError = "Could not schedule preparation. Your selection is kept."
+            } finally {
+                submissions--
+                if (submissions == 0) {
+                    val remaining = PreparationJobs.pendingSites()
+                    if (submissions == 0) pending = remaining
                 }
-                error = "Could not schedule preparation. Your selection is kept."
-            } finally { submitting = false }
+            }
         }
     }
 }

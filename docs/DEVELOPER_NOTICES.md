@@ -5,9 +5,10 @@ notification channels, deduplication and notification-tap handling. Video Downlo
 separate project key and the `video-downloader-announcement` Nostr addressable-event tag.
 
 Public key: `bb8a9ce60cacac6ee3bfefdc272df9fbc21a8010e2eb61b96aa3558ab97e71b5`.
-The private publishing key is in `.signing/announcement-key.properties`, mode 0600, ignored by
-Git and excluded from APK inputs. Preserve it with the release signing backups; changing it
-requires distributing an app with the new public key.
+The private publishing key must be provisioned locally in the ignored
+`.signing/announcement-key.properties` file or through `NOSTR_UPDATE_SECRET`.
+It must never be committed. The app pins the corresponding public key, so key
+rotation requires distributing an app update with the replacement public key.
 
 The app first reads the signed JSON mirror at `http://20.120.96.17/notices/announcement.json`,
 then falls back to the original four public relays. The public mirror payload must pass the same

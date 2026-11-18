@@ -18,11 +18,17 @@ import java.io.File
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import com.google.gson.Gson
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withLock
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 object OfflineDownloads {
     private var instance: DownloadManager? = null
     private var segmentExecutor: ThreadPoolExecutor? = null
+    private val retryLock = kotlinx.coroutines.sync.Mutex()
+    private val hlsEstimates = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    internal fun estimatedBytes(id: String): Long = hlsEstimates[id] ?: -1L
 
     /** Progress and state changes from Media3, consumed by the UI instead of a polling loop. */
     val updates = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1,
@@ -56,18 +62,33 @@ object OfflineDownloads {
         cache = SimpleCache(directory, NoOpCacheEvictor(), database)
     }
 
-    internal fun retryPending(context: Context, manager: DownloadManager) {
-        if (manager.downloadsPaused) return
+    internal suspend fun retryPending(context: Context, manager: DownloadManager) = retryLock.withLock {
+        if (manager.downloadsPaused || !hasOutputFolderAccess(context) || DownloadStore.operationValue("transfers", "folder-access") != null) return@withLock
         val retries = context.getSharedPreferences("download-retries", Context.MODE_PRIVATE)
-        val requests = mutableListOf<androidx.media3.exoplayer.offline.DownloadRequest>()
-        manager.downloadIndex.getDownloads(Download.STATE_FAILED).use { cursor ->
-            while (cursor.moveToNext()) {
-                val download = cursor.download
-                if (!Exports.deleting(download.request.id) && retries.getBoolean(download.request.id, false) && download.stopReason == Download.STOP_REASON_NONE)
-                    requests += download.request
+        val requests = withContext(Dispatchers.IO) {
+            manager.downloadIndex.getDownloads(Download.STATE_FAILED).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val download = cursor.download
+                        if (download.stopReason == Download.STOP_REASON_NONE) add(download.request)
+                    }
+                }
             }
         }
-        requests.forEach { manager.addDownload(it) }
+        val records = Exports.all(context)
+        val eligible = requests.filter { request ->
+            val id = request.id
+            val record = records[id]
+            !Exports.deleting(id) && retries.getBoolean(id, false) && retries.getInt("attempts:$id", 0) < MAX_TRANSFER_RESTARTS &&
+                record?.uri?.isEmpty() == true && record.identity?.isSiteDownload == true && record.media != null
+        }
+        if (eligible.isEmpty() || manager.downloadsPaused) return@withLock
+        DownloadService.startForeground(context, OfflineDownloadService::class.java)
+        eligible.forEach { request ->
+            val id = request.id
+            retries.edit { remove(id); putInt("attempts:$id", retries.getInt("attempts:$id", 0) + 1) }
+            manager.addDownload(request)
+        }
     }
 
     @Synchronized
@@ -93,23 +114,43 @@ object OfflineDownloads {
             .apply { allowCoreThreadTimeOut(true) }
         segmentExecutor = executor
         val downloaderFactory = androidx.media3.exoplayer.offline.DownloaderFactory { request ->
-            // Media3 invokes this on its download worker, including after process recovery.
-            // Database loading must finish before choosing this download's HTTP context.
-            kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
-            if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null) throw OutputFolderAccessRequired()
-            val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
-            require(record.identity?.isSiteDownload == true) { "This download record is not supported by this edition." }
-            val media = requireNotNull(record.media) { "Video source context is missing. Retry to resolve this episode again." }
-            val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor)).setTransferListener(transferListener)
-            // Resolve headers for every manifest, segment, and encryption-key URI. HLS resources
-            // commonly move across CDN hosts, so applying one static header map leaks or misses
-            // provider-specific headers after relative URLs and redirects are resolved.
-            val resolving = ResolvingDataSource.Factory(upstream) { dataSpec ->
-                dataSpec.withRequestHeaders(mediaRequestHeaders(media, dataSpec.uri.toString()))
-            }
-            val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
-                .setUpstreamDataSourceFactory(resolving)
-            androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(request)
+            DeferredDownloader(create = {
+                // This runs on the download task, including after process recovery.
+                // Database loading must finish before choosing this download's HTTP context.
+                kotlinx.coroutines.runBlocking { DownloadStore.awaitReady() }
+                if (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null)
+                    error("Choose the downloads folder and retry this episode.")
+                val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
+                require(record.identity?.isSiteDownload == true) { "This download record is not supported by this edition." }
+                val media = requireNotNull(record.media) { "Video source context is missing. Retry to resolve this episode again." }
+                val upstream = OkHttpDataSource.Factory(MediaRequests.client(media, SiteDownloadCookieStore(app)::headerFor))
+                    .setTransferListener(transferListener)
+                    .setContentTypePredicate { normalizedMediaType(it) !in setOf("text/html", "application/xhtml+xml") }
+                // Resolve headers for every manifest, segment, and encryption-key URI. HLS resources
+                // commonly move across CDN hosts, so applying one static header map leaks or misses
+                // provider-specific headers after relative URLs and redirects are resolved.
+                val resolving = ResolvingDataSource.Factory(upstream) { dataSpec ->
+                    dataSpec.withRequestHeaders(mediaRequestHeaders(media, dataSpec.uri.toString()))
+                }
+                val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
+                    .setUpstreamDataSourceFactory(resolving)
+                if (media.isHls()) {
+                    hlsEstimates.remove(request.id)
+                    selectedHlsDownloader(request, record.quality ?: media.quality, factory, executor) { bytes ->
+                        if (hlsEstimates.put(request.id, bytes) != bytes) updates.tryEmit(Unit)
+                    }
+                } else androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(request)
+            }, removeCached = {
+                // Cache removal never needs a live provider session or output-folder access.
+                val stillNeeded = isHlsMimeType(request.mimeType) && Exports.all(app).any { (id, item) ->
+                    id != request.id && item.uri.isEmpty() && !Exports.deleting(id) && item.media?.url == request.uri.toString()
+                }
+                if (!stillNeeded) {
+                    val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
+                    androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor)
+                        .createDownloader(request).remove()
+                }
+            })
         }
         return DownloadManager(app, androidx.media3.exoplayer.offline.DefaultDownloadIndex(database), downloaderFactory).also {
             val retries = app.getSharedPreferences("download-retries", Context.MODE_PRIVATE)
@@ -118,7 +159,7 @@ object OfflineDownloads {
                     if (!downloadsPaused && (!hasOutputFolderAccess(app) || DownloadStore.operations("folder-access")["transfers"] != null)) manager.pauseDownloads()
                 }
                 override fun onInitialized(manager: DownloadManager) {
-                    retryPending(app, manager)
+                    if (retries.all.values.any { it == true }) DownloadRetryService.schedule(app)
                     updates.tryEmit(Unit)
                 }
                 override fun onDownloadChanged(manager: DownloadManager, download: Download, finalException: Exception?) {
@@ -139,19 +180,19 @@ object OfflineDownloads {
                     // too (for example a router with no internet), retaining every cached segment.
                     val causes = finalException?.let { generateSequence<Throwable>(it) { error -> error.cause }.toList() }.orEmpty()
                     val http = causes.filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>().firstOrNull()
-                    if (download.state == Download.STATE_FAILED && challenge == null &&
-                        causes.any { it is java.io.IOException } && (http == null || http.responseCode == 408 || http.responseCode == 429 || http.responseCode >= 500)) {
-                        retries.edit { putBoolean(download.request.id, true) }
-                        DownloadRetryService.schedule(app)
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            val current = manager.downloadIndex.getDownload(download.request.id)
-                            if (current?.state == Download.STATE_FAILED && current.stopReason == Download.STOP_REASON_NONE && !manager.downloadsPaused)
-                                manager.addDownload(current.request)
-                        }, 30_000)
+                    val id = download.request.id
+                    if (download.state == Download.STATE_FAILED) {
+                        val retry = challenge == null && !Exports.deleting(id) &&
+                            causes.none { it is androidx.media3.datasource.HttpDataSource.InvalidContentTypeException } &&
+                            causes.any { it is java.io.IOException } && isTransientTransferHttpStatus(http?.responseCode) &&
+                            retries.getInt("attempts:$id", 0) < MAX_TRANSFER_RESTARTS
+                        retries.edit { if (retry) putBoolean(id, true) else remove(id) }
+                        if (retry) DownloadRetryService.schedule(app)
                     }
-                    if (download.state == Download.STATE_COMPLETED || download.state == Download.STATE_REMOVING ||
-                        (download.state == Download.STATE_FAILED && (challenge != null || (http != null && http.responseCode in 400..499 && http.responseCode != 408 && http.responseCode != 429))))
-                        retries.edit { remove(download.request.id) }
+                    if (download.state == Download.STATE_COMPLETED || download.state == Download.STATE_REMOVING) {
+                        retries.edit { remove(id); remove("attempts:$id") }
+                        hlsEstimates.remove(id)
+                    }
                     if (download.state == Download.STATE_COMPLETED && !Exports.deleting(download.request.id)) {
                         app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).edit { remove(download.request.id) }
                         if (!Exports.all(app).containsKey(download.request.id))
@@ -174,6 +215,20 @@ object OfflineDownloads {
 }
 
 internal data class MediaVerification(val id: String, val url: String, val browserUrl: String, val time: Long)
+private const val MAX_TRANSFER_RESTARTS = 3
+
+internal fun isTransientTransferHttpStatus(status: Int?): Boolean = status == null || status == 408 || status == 429 || status in 500..599
+
+internal fun parseMediaVerification(id: String, value: String): MediaVerification? = runCatching {
+    Gson().fromJson(value, MediaVerification::class.java)?.takeIf { event ->
+        event.id == id && event.url.toHttpUrlOrNull() != null && event.browserUrl.toHttpUrlOrNull() != null
+    }
+}.getOrNull()
+
+internal fun mediaVerificationEvents(context: Context): Map<String, MediaVerification> =
+    context.getSharedPreferences("media-verification", Context.MODE_PRIVATE).all.mapNotNull { (id, value) ->
+        parseMediaVerification(id, value.toString())?.let { id to it }
+    }.toMap()
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.download_channel, 0) {
@@ -204,7 +259,8 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
     }
     override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification {
         val active = downloads.filter { it.state == Download.STATE_DOWNLOADING }
-        val known = active.map { it.percentDownloaded }.filter { it >= 0f }
+        val known = active.map { estimatedTransferProgress(it.percentDownloaded, it.bytesDownloaded, OfflineDownloads.estimatedBytes(it.request.id)) }
+            .filter { it >= 0f }
         val percent = if (active.isNotEmpty() && known.size == active.size) known.average().toInt().coerceIn(0, 100) else null
         val rate = if (active.isEmpty()) { DownloadSpeed.reset(); 0L } else DownloadSpeed.sample()
         val title = if (active.size == 1) String(active[0].request.data).ifBlank { "Downloading episode" }
@@ -230,19 +286,37 @@ class OfflineDownloadService : DownloadService(1, 1000L, "downloads", R.string.d
 /** A persisted job survives process death between a transient failure and its delayed retry. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class DownloadRetryService : android.app.job.JobService() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var retry: Job? = null
+
     override fun onStartJob(params: android.app.job.JobParameters): Boolean {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            val result = runCatching {
-                DownloadService.startForeground(this, OfflineDownloadService::class.java)
-                val manager = OfflineDownloads.manager(this)
-                if (manager.isInitialized) OfflineDownloads.retryPending(this, manager)
+        retry = scope.launch {
+            try {
+                DownloadStore.awaitReady()
+                val manager = OfflineDownloads.manager(this@DownloadRetryService)
+                val initialized = withTimeoutOrNull(5_000L) {
+                    while (!manager.isInitialized) delay(50)
+                    true
+                } == true
+                if (!initialized) {
+                    jobFinished(params, true)
+                    return@launch
+                }
+                OfflineDownloads.retryPending(this@DownloadRetryService, manager)
+                jobFinished(params, false)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                DebugTrace.event("download_retry_deferred", "type" to failure.javaClass.simpleName)
+                jobFinished(params, true)
             }
-            result.onFailure { DebugTrace.event("download_retry_deferred", "reason" to it.message) }
-            jobFinished(params, result.isFailure)
         }
         return true
     }
-    override fun onStopJob(params: android.app.job.JobParameters) = true
+    override fun onStopJob(params: android.app.job.JobParameters): Boolean {
+        retry?.cancel()
+        return true
+    }
+    override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
     companion object {
         fun schedule(context: Context) {
@@ -250,7 +324,10 @@ class DownloadRetryService : android.app.job.JobService() {
                 .setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_ANY)
                 .setMinimumLatency(30_000).setPersisted(true)
                 .setBackoffCriteria(30_000, android.app.job.JobInfo.BACKOFF_POLICY_EXPONENTIAL).build()
-            context.getSystemService(android.app.job.JobScheduler::class.java).schedule(job)
+            runCatching {
+                val scheduler = context.getSystemService(android.app.job.JobScheduler::class.java)
+                if (scheduler.getPendingJob(job.id) == null) scheduler.schedule(job)
+            }.onFailure { DebugTrace.event("download_retry_schedule_failed", "type" to it.javaClass.simpleName) }
         }
     }
 }

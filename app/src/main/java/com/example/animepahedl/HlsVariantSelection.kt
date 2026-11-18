@@ -1,6 +1,6 @@
 package com.example.animepahedl
 
-/** Keep the selected video and its external renditions together for the cache-only remuxer. */
+/** Both transfer and remux use one video and one associated audio rendition. */
 internal fun selectCachedHlsVariant(playlist: String, quality: String): String {
     val lines = playlist.lines()
     fun attributes(line: String): Map<String, String> =
@@ -46,7 +46,7 @@ internal fun selectCachedHlsVariant(playlist: String, quality: String): String {
             line.startsWith("#EXT-X-MEDIA:") -> {
                 val rendition = attributes(line)
                 val type = rendition["TYPE"]
-                type != null && type in setOf("AUDIO", "SUBTITLES", "CLOSED-CAPTIONS") &&
+                type != null && type in setOf("AUDIO", "CLOSED-CAPTIONS") &&
                     rendition["GROUP-ID"] == chosen.attributes[type] && (type != "AUDIO" || index == audio)
             }
             else -> true

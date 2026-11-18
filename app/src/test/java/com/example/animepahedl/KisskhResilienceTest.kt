@@ -291,6 +291,21 @@ class KisskhResilienceTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun videoVariantsUsePlayableTemporaryUrlWhenPrimaryDescriptorIsInvalid() = runBlocking {
+        val (server, client) = secureServer()
+        server.start()
+        try {
+            enqueueDramaDetails(server, """{"country":"South Korea","type":"TVSeries","title":"Show","episodes":[{"id":456,"number":1}]}""")
+            // The live endpoint advertises both fields and serves JSON with image/png MIME.
+            server.enqueue(MockResponse().setHeader("Content-Type", "image/png")
+                .setBody("""{"Video":"unavailable","Video_tmp":"https://cdn.test/backup.m3u8"}"""))
+            val result = api(client).variants("https://kisskh.do/Drama/Show?id=123&ep=456".toHttpUrl(), includeSubtitles = false)
+            assertEquals("https://cdn.test/backup.m3u8", result.single().url)
+            assertEquals("application/x-mpegURL", result.single().mimeType)
+            assertEquals(2, server.requestCount)
+        } finally { server.shutdown() }
+    }
+
     @Test fun independentLocalizationFailuresKeepOriginalTracksAndInputOrder() = runBlocking {
         val tracks = (0 until 8).map { index ->
             MediaSubtitle("https://cdn.example/$index.srt", "Track $index", "lang$index")

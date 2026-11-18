@@ -18,6 +18,9 @@ internal const val AUTO_PROVIDER = "auto"
  */
 internal const val MAX_RESUME_POINTS = 24
 
+/** A remote account count beyond this is malformed for an episode list and must not be expanded. */
+internal const val MAX_REMOTE_PROGRESS_EPISODES = 10_000
+
 /** Where one episode was left, and how long it is. */
 @Serializable
 data class EpisodeResume(
@@ -318,7 +321,10 @@ internal fun historyAfterRemoteProgress(
     totalEpisodes: Int?,
     airedEpisodes: Int? = null,
 ): HistoryEntry? {
-    if (remoteProgress < 1) return null
+    // This value comes from a remote list service. Expanding it into watchedEpisodes below is
+    // linear in the count, so reject implausible values before they can exhaust memory. The same
+    // bound also keeps the `progress + 1` calculation in remoteRowEpisode safely in range.
+    if (remoteProgress !in 1..MAX_REMOTE_PROGRESS_EPISODES) return null
     // The account says the series is finished; removal is the caller's decision, not this one's.
     val target = remoteRowEpisode(remoteProgress, totalEpisodes, airedEpisodes)?.toDouble() ?: return null
     // Everything up to the count counts as watched — that is all AniList and MAL store — so the
@@ -361,6 +367,7 @@ internal fun historyAfterRemoteProgress(
  * next sync after the next episode airs moves it on.
  */
 internal fun remoteRowEpisode(progress: Int, totalEpisodes: Int?, airedEpisodes: Int?): Int? {
+    if (progress !in 0..MAX_REMOTE_PROGRESS_EPISODES) return null
     val next = progress + 1
     if (totalEpisodes != null && totalEpisodes > 0 && next > totalEpisodes) return null
     if (airedEpisodes != null && airedEpisodes > 0 && next > airedEpisodes) {

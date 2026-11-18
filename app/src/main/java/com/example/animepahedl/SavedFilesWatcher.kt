@@ -92,8 +92,20 @@ internal suspend fun missingSavedFiles(context: Context, records: Map<String, Ex
             }
             if (!accessible) continue
         }
-        val present = querySavedFiles(context, uri, arrayOf(OpenableColumns.DISPLAY_NAME), notFound = false) { it.moveToFirst() }
+        // Document providers may report FileNotFound for a URI that lost its grant or a detached volume.
+        val present = querySavedFiles(context, uri, arrayOf(OpenableColumns.DISPLAY_NAME)) {
+            if (it.extras.getBoolean(DocumentsContract.EXTRA_LOADING)) null else it.moveToFirst()
+        }
         if (present == false) missing[id] = record
+        else if (present == null && treeAccessible[record.tree] == true) {
+            for ((children, childId) in externalStorageAncestorListings(uri)) {
+                val absent = querySavedFiles(context, children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID)) {
+                    confirmedChildMissing(it, childId)
+                } ?: continue
+                if (absent) missing[id] = record
+                break
+            }
+        }
     }
     return missing
 }

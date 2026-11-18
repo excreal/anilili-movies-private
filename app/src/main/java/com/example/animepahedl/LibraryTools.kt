@@ -12,6 +12,7 @@ internal data class StorageReport(val available: Long, val retained: Long, val f
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal suspend fun inspectStorage(context: Context): StorageReport = withContext(Dispatchers.IO) {
+    OfflineDownloads.prepareCache(context)
     val root = context.getExternalFilesDir(null) ?: context.filesDir
     val records = Exports.all(context)
     val inaccessible = records.values.count { record -> record.uri.isNotBlank() && runCatching {

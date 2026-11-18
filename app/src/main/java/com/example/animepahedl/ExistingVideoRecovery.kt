@@ -2,7 +2,6 @@ package com.example.animepahedl
 
 import android.app.DownloadManager
 import android.content.Context
-import androidx.media3.exoplayer.offline.DownloadService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -62,8 +61,9 @@ private val existingRecoveryLock = Mutex()
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal suspend fun reconcileExistingVideos(context: Context) = existingRecoveryLock.withLock {
     val settings = AppSettings(context)
-    if (!hasOutputFolderAccess(context, settings.outputTree)) throw OutputFolderAccessRequired()
     DownloadStore.awaitReady()
+    val selectedTree = settings.outputTree
+    if (!hasOutputFolderAccess(context, selectedTree)) throw OutputFolderAccessRequired()
     val (manager, resumeAfter) = withContext(Dispatchers.Main.immediate) {
         val manager = OfflineDownloads.manager(context)
         val resumeAfter = !manager.downloadsPaused || DownloadStore.operations("folder-access")["transfers"] != null
@@ -72,14 +72,16 @@ internal suspend fun reconcileExistingVideos(context: Context) = existingRecover
     }
     DownloadStore.operation("transfers", "folder-access", "1")
     DownloadStore.flush()
-    val indices = mutableMapOf<String, ExistingOutputIndex>()
+    val indices = withContext(Dispatchers.IO) {
+        mutableMapOf(selectedTree to ExistingOutputIndex(context, selectedTree).apply { verifyReadable() })
+    }
     val pending = Exports.all(context).filterValues { it.uri.isEmpty() && it.identity != null }
     for ((id, original) in pending) {
         currentCoroutineContext().ensureActive()
         if (Exports.deleting(id)) continue
         clearPendingVideo(context, id)
         val identity = original.identity ?: continue
-        val tree = original.tree.takeIf { hasOutputFolderAccess(context, it) } ?: settings.outputTree
+        val tree = original.tree.takeIf { hasOutputFolderAccess(context, it) } ?: selectedTree
         val extension = if (original.media?.mimeType == "video/webm" || original.media?.url?.substringBefore('?')?.endsWith(".webm", true) == true) "webm" else "mp4"
         val found = withContext(Dispatchers.IO) { indices.getOrPut(tree) { ExistingOutputIndex(context, tree) }.find(original.outputLocation(extension)) }
         if (found != null) adoptExistingVideo(context, identity, found, tree)
@@ -90,9 +92,10 @@ internal suspend fun reconcileExistingVideos(context: Context) = existingRecover
         }
     }
     DownloadStore.flush()
+    if (selectedTree != settings.outputTree || !hasOutputFolderAccess(context, selectedTree)) throw OutputFolderAccessRequired()
     DownloadStore.operation("transfers", "folder-access", null)
     DownloadStore.flush()
     if (resumeAfter) withContext(Dispatchers.Main.immediate) { manager.resumeDownloads() }
-    if (Exports.all(context).any { (_, record) -> record.uri.isEmpty() && record.error.isEmpty() }) Exports.start(context)
+    Exports.resumeReady(context)
     PreparationJobs.folderAccessRestored(context)
 }

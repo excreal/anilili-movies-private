@@ -33,7 +33,7 @@ import kotlinx.coroutines.sync.withPermit
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class DownloaderViewModel(application: Application, private val repository: AnimeRepository) : AndroidViewModel(application) {
     constructor(application: Application) : this(application, AnimeRepository())
-    private val downloadRepository: DownloadRepository = AndroidDownloadRepository(application, repository)
+    private val downloadRepository: DownloadRepository = AndroidDownloadRepository(application)
     private val libraryPreferences = application.getSharedPreferences("personal-library", Context.MODE_PRIVATE)
     var bookmarks by mutableStateOf(loadBookmarks())
         private set
@@ -117,6 +117,9 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             savedFilesPolling = viewModelScope.launch {
                 try {
                     DownloadStore.awaitReady()
+                    try { Exports.resumeReady(app) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { DebugTrace.event("export_resume_deferred") }
                     savedFilesWatcher.updateRoots()
                     refreshSavedFiles()
                     while (true) {
@@ -231,7 +234,8 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         if (ids.isEmpty()) return false
         val system = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         return ids.any { id ->
-            system.query(DownloadManager.Query().setFilterById(id.toLong())).use { cursor ->
+            val number = id.toLongOrNull() ?: return@any false
+            system.query(DownloadManager.Query().setFilterById(number)).use { cursor ->
                 cursor.moveToFirst() && cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) in
                     listOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
             }
@@ -494,8 +498,10 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         refreshDownloads()
     }
     fun prioritize(id: String) = runDownloadAction(id) {
+        val eligible = downloads.filter { DownloadAction.PAUSE in it.actions || DownloadAction.RESUME in it.actions }
+        if (eligible.none { it.id == id }) return@runDownloadAction
+        if (!hasOutputFolderAccess(app) || DownloadStore.operationValue("transfers", "folder-access") != null) throw OutputFolderAccessRequired()
         withContext(Dispatchers.IO) { QueueOrder.first(app, id, downloads.filter { !it.complete }.map { it.id }) }
-        val eligible = downloads.filter { !it.complete && !it.id.startsWith("direct:") && !it.saving && !it.failed && !it.deleting }
         eligible.filter { it.id != id }.forEach { downloadRepository.pause(it.id) }
         if (eligible.any { it.id == id }) downloadRepository.resume(id)
         downloadNotice = "Priority saved. Other HLS transfers are paused; resume them when ready. Direct files are managed by Android."
@@ -504,13 +510,16 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         Exports.withItemLock(id) {
             val record = Exports.all(app)[id] ?: return@withItemLock
             require(record.uri.isNotBlank()) { "Only saved records can be removed without deleting media" }
+            check(DownloadStore.operationValue(id, "delete") != "") { "Wait for the current deletion to finish." }
             Exports.remove(app, id)
+            DownloadStore.operation(id, "delete", null)
+            DownloadStore.operation(id, "delete-keep-file", null)
+            if (id.startsWith("direct:")) DownloadStore.operation(id.removePrefix("direct:"), "direct", null)
             DownloadStore.flush()
         }
         refreshDownloads()
     }
     fun relink(id: String, uri: Uri) = runDownloadAction(id) {
-        app.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val size = kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
             val size = app.contentResolver.openFileDescriptor(uri, "r")?.use { require(it.statSize != 0L) { "Selected file is empty" }; it.statSize } ?: error("Cannot read selected video")
             val metadata = android.media.MediaMetadataRetriever()
@@ -522,6 +531,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             require(!Exports.deleting(id)) { "Deletion in progress" }
             val record = Exports.all(app)[id] ?: error("Download no longer exists")
             require(record.uri.isNotBlank()) { "Finish or cancel the transfer first" }
+            app.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             Exports.put(app, id, record.copy(uri = uri.toString(), error = "", bytes = size.takeIf { it >= 0 } ?: record.bytes))
             DownloadStore.flush()
         }
@@ -649,12 +659,11 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     }
     private var refreshAgain = false
     private fun checkMediaVerification() {
-        val mediaEvents = app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).all.keys
-        failures.keys.filterIsInstance<OperationId.Download>().filter { !relevant(it) || (failures[it]?.verificationNeeded == true && it.id !in mediaEvents) }.forEach { failures.remove(it) }
-        app.getSharedPreferences("media-verification", Context.MODE_PRIVATE).all.values.forEach { value ->
-            val event = runCatching { com.google.gson.Gson().fromJson(value.toString(), MediaVerification::class.java) }.getOrNull() ?: return@forEach
-            val op = OperationId.Download(event.id)
-            if (relevant(op) && failures[op] == null) fail(VerificationRequired(event.url, event.browserUrl), op)
+        val events = mediaVerificationEvents(app)
+        failures.keys.filterIsInstance<OperationId.Download>().filter { !relevant(it) || (failures[it]?.verificationNeeded == true && it.id !in events) }.forEach { failures.remove(it) }
+        events.forEach { (id, event) ->
+            val op = OperationId.Download(id)
+            if (relevant(op) && failures[op]?.verificationNeeded != true) fail(VerificationRequired(event.url, event.browserUrl), op)
         }
     }
 
@@ -696,14 +705,16 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         if (deletingDownloads || ids.isEmpty()) return
         deletingDownloads = true
         viewModelScope.launch {
-            val outcomes = withContext(kotlinx.coroutines.NonCancellable) { downloadRepository.deleteBatch(ids, confirmedSaved) }
-            outcomes.filter { it.succeeded }.forEach { failures.remove(OperationId.Download(it.id)) }
-            val failed = outcomes.filterNot { it.succeeded }.map { it.id }.toSet()
-            selectedDownloadIds = failed
-            if (failed.isEmpty()) selectionMode = false
-            downloadNotice = "${outcomes.size - failed.size} deleted · ${failed.size} couldn’t be deleted"
-            deletingDownloads = false
-            refreshDownloads()
+            try {
+                val outcomes = withContext(kotlinx.coroutines.NonCancellable) { downloadRepository.deleteBatch(ids, confirmedSaved) }
+                outcomes.filter { it.succeeded }.forEach { failures.remove(OperationId.Download(it.id)) }
+                val failed = outcomes.filterNot { it.succeeded }.map { it.id }.toSet()
+                selectedDownloadIds = failed
+                if (failed.isEmpty()) selectionMode = false
+                downloadNotice = "${outcomes.size - failed.size} deleted · ${failed.size} couldn’t be deleted"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { downloadNotice = "Couldn’t remove downloads. Try again." }
+            finally { deletingDownloads = false; refreshDownloads() }
         }
     }
     private suspend fun recoverDeletions() {
@@ -730,6 +741,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
     }
 
     fun saveOutputFolder(input: String): Boolean {
+        if (checkingExistingFiles) { settingsMessage = "Wait for the current folder check to finish."; return false }
         val folder = normalizeOutputFolder(input) ?: return false
         settings.outputTree = ""
         outputTree = ""
@@ -742,21 +754,23 @@ class DownloaderViewModel(application: Application, private val repository: Anim
         return true
     }
 
-    fun chooseOutputTree(uri: Uri, onReady: () -> Unit = {}): Boolean {
+    fun chooseOutputTree(uri: Uri): Boolean {
+        if (checkingExistingFiles) { settingsMessage = "Wait for the current folder check to finish."; return false }
         try {
             app.contentResolver.takePersistableUriPermission(uri,
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            if (!hasOutputFolderAccess(app, uri.toString())) { settingsMessage = "Choose a folder with read and write access."; return false }
+            DownloadStore.operation("transfers", "folder-access", "1")
+            outputCheckRequired = true
             settings.outputTree = uri.toString()
             outputTree = uri.toString()
-            outputAccessGranted = hasOutputFolderAccess(app)
-            if (!outputAccessGranted) { settingsMessage = "Choose a folder with read and write access."; return false }
+            outputAccessGranted = true
             checkingExistingFiles = true
             settingsMessage = "Checking existing videos before resuming downloads…"
             viewModelScope.launch {
                 try {
                     reconcileExistingVideos(app)
                     settingsMessage = "Folder linked. Matching videos are reused; remaining downloads can continue."
-                    onReady()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { settingsMessage = "Could not check this folder. Choose the original downloads folder again." }
                 finally { checkingExistingFiles = false; refreshDownloads() }
@@ -810,7 +824,7 @@ class DownloaderViewModel(application: Application, private val repository: Anim
             }
             }
             recoverDeletions()
-            Exports.start(app)
+            Exports.resumeReady(app)
             refreshDownloads()
             checkMediaVerification()
             viewModelScope.launch { DownloadStore.revisions.collect {

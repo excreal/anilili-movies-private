@@ -23,7 +23,7 @@ internal class SiteDownloadRepository(
 ) {
     private val providerSession = CatalogSessionCookies()
     private val kisskh = KisskhApi(client, cookieHeader)
-    private data class Page(val text: String, val url: HttpUrl)
+    private data class Page(val text: String, val url: HttpUrl, val redirectTarget: HttpUrl? = null)
 
     suspend fun inspect(input: String, cookie: String = ""): SiteDownloadSeries = withContext(Dispatchers.IO) {
         val url = siteDownloadInput(input)
@@ -38,9 +38,9 @@ internal class SiteDownloadRepository(
                 val initial = fetch(url, cookie = cookie)
                 val (name, poster) = parseProviderTitleAndPoster(initial.text, initial.url)
                 val title = cleanProviderTitle(name, provider).ifBlank { "Video" }
-                val variants = eroticVariants(initial, cookie)
+                if (eroticVideoSource(initial.text) == null) throw IOException("The player did not expose a supported video link.")
                 SiteDownloadSeries(provider, "EROTICMV:${initial.url}", title, poster, initial.url.toString(),
-                    listOf(SiteDownloadEpisode(initial.url.toString(), 1, title, initial.url.toString())), variantQualities(variants))
+                    listOf(SiteDownloadEpisode(initial.url.toString(), 1, title, initial.url.toString())), listOf("Best", "Original"))
             }
             else -> throw IOException("${provider.contentLabel} sources aren't included in this edition.")
         }
@@ -72,9 +72,6 @@ internal class SiteDownloadRepository(
         }
     }
 
-    private fun variantQualities(variants: List<MediaVariant>): List<String> = listOf("Best") + variants.map { it.quality }.distinct()
-        .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
-
     private fun requireAllowedProvider(url: HttpUrl): SiteDownloadProvider {
         val provider = siteDownloadProvider(url)
         if (provider !in allowedProviders) throw IOException("${provider.contentLabel} sources aren't included in this edition.")
@@ -84,7 +81,7 @@ internal class SiteDownloadRepository(
     private suspend fun episodeVariants(url: HttpUrl, provider: SiteDownloadProvider, cookie: String,
         includeSubtitles: Boolean = true): List<MediaVariant> = when (provider) {
         SiteDownloadProvider.KISSKH -> kisskh.variants(url.newBuilder().host("kisskh.do").build(), includeSubtitles)
-        SiteDownloadProvider.DIRECT -> listOf(MediaVariant(decodeEroticMedia(url.toString()), mimeType = if (isHlsMedia(url)) "application/x-mpegURL" else if (url.encodedPath.endsWith(".webm", true) || url.queryParameter("mime_type") == "video/webm") "video/webm" else "video/mp4"))
+        SiteDownloadProvider.DIRECT -> listOf(MediaVariant(url.toString(), mimeType = siteVideoMimeType(url)))
         SiteDownloadProvider.EROTICMV -> eroticVariants(fetch(url, cookie = cookie), cookie)
         else -> throw IOException("${provider.contentLabel} sources aren't included in this edition.")
     }
@@ -93,24 +90,31 @@ internal class SiteDownloadRepository(
         var page = initial
         val seen = mutableSetOf<String>()
         repeat(3) {
-            val raw = eroticVideoSource(page.text) ?: throw IOException("The player did not expose a supported video link.")
-            val target = resolveProviderUrl(page.url, decodeEroticMedia(raw)).toHttpUrl()
-            if (isHlsMedia(target) || isSupportedVideoFile(target)) return listOf(MediaVariant(target.toString(), mimeType = if (isHlsMedia(target)) "application/x-mpegURL" else "video/mp4"))
+            val source = eroticVideoSource(page.text) ?: throw IOException("The player did not expose a supported video link.")
+            val target = resolveProviderUrl(page.url, decodeEroticMedia(source.url)).toHttpUrl()
+            if (!source.isPlayerPage || isHlsMedia(target) || isSupportedVideoFile(target) || isHlsMimeType(source.declaredType)) {
+                return listOf(MediaVariant(target.toString(), mimeType = siteVideoMimeType(target, source.declaredType),
+                    headers = mapOf("Referer" to page.url.toString())))
+            }
             require(seen.add(target.toString())) { "Embedded player loop detected." }
-            // An embedded host gets no provider cookies, including on redirect.
-            page = fetch(target, referer = page.url.toString(), cookie = if (target.host == initial.url.host) cookie else "")
+            // Fetch only an identified player document. Its redirect may be a one-time media URL.
+            page = fetch(target, referer = page.url.toString(), cookie = if (target.host == initial.url.host) cookie else "",
+                followRedirects = false)
+            page.redirectTarget?.let { return listOf(MediaVariant(it.toString(), mimeType = siteVideoMimeType(it),
+                headers = mapOf("Referer" to page.url.toString()))) }
         }
         throw IOException("The embedded player is nested too deeply.")
     }
 
-    private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024): Page {
+    private suspend fun fetch(url: HttpUrl, referer: String? = null, cookie: String = "", limit: Int = 8 * 1024 * 1024,
+        followRedirects: Boolean = true): Page {
         require('\r' !in cookie && '\n' !in cookie) { "Invalid Cookie header." }
         // Re-evaluate imported cookies per request; explicit headers stay on their original origin.
         // Provider pages carry session context, so never let an HTTPS page redirect downgrade
         // that request (or imported cookies) to cleartext. Direct HTTP media bypasses fetch and
         // remains supported by the DIRECT path.
         if (url.scheme != "https") throw IOException("Provider pages must use HTTPS.")
-        val scoped = client.newBuilder().followSslRedirects(false).cookieJar(providerSession).addNetworkInterceptor { chain ->
+        val scoped = client.newBuilder().followRedirects(followRedirects).followSslRedirects(false).cookieJar(providerSession).addNetworkInterceptor { chain ->
             val builder = chain.request().newBuilder()
             val target = chain.request().url
             if (cookieHeader != null) {
@@ -129,6 +133,11 @@ internal class SiteDownloadRepository(
         request.header("Referer", referer ?: url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())
         if (cookie.isNotBlank()) request.header("Cookie", cookie)
         return scoped.newCall(request.build()).consumeCancellable { response ->
+            if (!followRedirects && response.isRedirect) {
+                val location = response.header("Location")?.takeIf(String::isNotBlank)
+                    ?: throw IOException("The embedded player returned a redirect without a link.")
+                return@consumeCancellable Page("", response.request.url, resolveProviderUrl(response.request.url, location).toHttpUrl())
+            }
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} from ${response.request.url.host}. Try again or refresh provider cookies.")
             val body = response.body
             if (body.contentLength() > limit) throw IOException("Provider metadata exceeds the size limit.")

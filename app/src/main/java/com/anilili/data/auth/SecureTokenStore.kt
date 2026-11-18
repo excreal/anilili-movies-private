@@ -35,14 +35,15 @@ internal class SecureTokenStore(context: Context, private val slotKey: String = 
 
     fun save(token: String) {
         val encrypted = encrypt(token)
-        prefs.edit()
-            .putString(slotKey, encrypted)
-            .remove(KEY_TOKEN_LEGACY)
-            .apply()
+        prefs.edit().putString(slotKey, encrypted).apply {
+            legacyTokenKeyForSlot(slotKey)?.let(::remove)
+        }.apply()
     }
 
     fun clear() {
-        prefs.edit().remove(slotKey).remove(KEY_TOKEN_LEGACY).apply()
+        prefs.edit().remove(slotKey).apply {
+            legacyTokenKeyForSlot(slotKey)?.let(::remove)
+        }.apply()
     }
 
     private fun migrateLegacyToken() {
@@ -150,3 +151,7 @@ internal class SecureTokenStore(context: Context, private val slotKey: String = 
         private const val KEY_SOFTWARE_KEY = "legacy_api22_software_key"
     }
 }
+
+/** Only the original AniList store owns the unencrypted legacy key being migrated. */
+internal fun legacyTokenKeyForSlot(slotKey: String): String? =
+    SecureTokenStore.KEY_TOKEN_LEGACY.takeIf { slotKey == SecureTokenStore.KEY_TOKEN_ENCRYPTED }

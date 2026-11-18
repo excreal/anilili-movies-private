@@ -1,6 +1,9 @@
 package com.example.animepahedl
 
 import com.google.gson.Gson
+import com.example.animepahedl.metadata.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -8,6 +11,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CatalogViewModelTest {
+    @Test fun cancelledTaxonomyLoadIsNotPublishedAsAnEmptyResult() = runBlocking {
+        val api = object : SiteMetadataApi {
+            override val site = MetadataSite.EROTICMV
+            override suspend fun browse(query: MetadataBrowseQuery) = error("unused")
+            override suspend fun details(url: String) = error("unused")
+            override suspend fun episode(url: String) = error("unused")
+            override suspend fun taxonomy(): MetadataTaxonomy = throw CancellationException("source changed")
+        }
+
+        val result = runCatching { metadataTaxonomyGroups(api) }
+
+        assertTrue(result.exceptionOrNull() is CancellationException)
+    }
+
     @Test fun cacheKeepsEveryCachedItemWithItsMatchingTailContinuation() {
         val items = (0 until 750).map { CatalogItem("Title $it", "https://source.test/$it", "") }
         val original = CatalogPage(items, "https://source.test/page/16")

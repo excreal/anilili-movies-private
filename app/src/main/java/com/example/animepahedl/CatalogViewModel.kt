@@ -153,13 +153,14 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
     private val metadataApis by lazy { SiteMetadataApis.forApp(application) }
     init {
         load(false)
+        loadCategories(source)
         viewModelScope.launch {
             sourcePreferences.state.collect { settings ->
                 availableSources = settings.order.filter { it in settings.enabled }
                 if (source !in settings.enabled) {
                     val replacement = availableSources.firstOrNull() ?: MovieCatalogConfig.initialSource
                     if (source != replacement) {
-                        source = replacement; query = ""; activeFilter = null; filterLabel = null; load(false)
+                        source = replacement; query = ""; activeFilter = null; filterLabel = null; load(false); loadCategories(replacement)
                     }
                 }
             }
@@ -183,7 +184,8 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         categoryGroups = emptyMap()
         val site = when (value) { CatalogSource.EROTICMV -> MetadataSite.EROTICMV; else -> return }
         taxonomyJob = viewModelScope.launch {
-            val groups = runCatching { metadataApis[site].taxonomy().groups }.getOrDefault(emptyMap())
+            val groups = metadataTaxonomyGroups(metadataApis[site])
+            ensureActive()
             if (source == value) categoryGroups = groups.mapValues { (_, terms) -> terms.map { SiteShowTerm(it.name, it.id, it.url) } }
         }
     }
@@ -234,6 +236,16 @@ internal class CatalogViewModel(application: Application) : AndroidViewModel(app
         }
     }
 
+}
+
+/** A failed taxonomy may show as empty, but cancellation must never be mistaken for that result. */
+internal suspend fun metadataTaxonomyGroups(api: com.example.animepahedl.metadata.SiteMetadataApi):
+    Map<String, List<com.example.animepahedl.metadata.MetadataTerm>> = try {
+    api.taxonomy().groups
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    emptyMap()
 }
 
 internal fun isSafeMetadataFilterRoute(source: CatalogSource, kind: String, raw: String?): Boolean {

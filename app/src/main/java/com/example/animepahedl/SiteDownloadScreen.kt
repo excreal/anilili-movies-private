@@ -75,9 +75,12 @@ internal fun SiteDownloadScreen(
                 IconButton(onClick = model::dismissNotice) { AppSymbol(AppIcon.Close, description = "Dismiss notice") }
             }
         } }
-        model.error?.let { message -> item(contentType = "error") {
+        (model.error ?: model.preparationError)?.let { message -> item(contentType = "error") {
             Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
-                Column(Modifier.padding(12.dp)) { Text(message); TextButton(onClick = model::dismissError) { Text("Dismiss") } }
+                Column(Modifier.padding(12.dp)) {
+                    Text(message)
+                    TextButton(onClick = if (model.error != null) model::dismissError else model::dismissPreparationError) { Text("Dismiss") }
+                }
             }
         } }
         model.series?.let { series ->
@@ -325,11 +328,11 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { DownloadSectionLabel("Quality") }
                 item {
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(4.dp),
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         (listOf("Best") + series.qualities).distinct().forEach { quality ->
                             val active = model.quality == quality
-                            Box(Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(12.dp))
+                            Box(Modifier.widthIn(min = 80.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
                                 .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else Color.Transparent)
                                 .selectable(selected = active, enabled = !model.discarding, role = Role.Tab, onClick = { model.chooseQuality(quality) }),
                                 contentAlignment = Alignment.Center) {
@@ -360,7 +363,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp))
                             .background(if (checked) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else MaterialTheme.colorScheme.surfaceContainerLow)
                             .selectable(checked, role = Role.Checkbox, onClick = { model.toggleEpisode(episode) })
-                            .heightIn(min = 46.dp).padding(horizontal = 16.dp, vertical = 9.dp),
+                        .heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f)) {
                                 Text("Episode ${episode.displayNumber}", style = MaterialTheme.typography.bodyMedium, fontWeight = if (checked) FontWeight.W700 else FontWeight.W600)
@@ -383,7 +386,7 @@ private fun RemoteDownloadSheet(series: SiteDownloadSeries, model: SiteDownloadV
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 DestinationSummary(outputLabel(downloads))
-                Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(8.dp),
+                Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(8.dp),
                     enabled = model.ready && model.selectionError == null && selected.isNotEmpty() && !downloads.checkingExistingFiles &&
                         !model.discarding) {
                     Text((if (series.isSingleVideo) "Download video" else "Download ${selected.size} episode${if (selected.size == 1) "" else "s"}").uppercase(),

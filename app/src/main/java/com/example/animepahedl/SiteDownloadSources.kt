@@ -77,14 +77,20 @@ internal fun siteDownloadProvider(url: HttpUrl): SiteDownloadProvider = when {
     hostMatchesDomain(url.host, "tiktok.com") -> throw IOException("TikTok is not supported by this downloader.")
     hostMatchesDomain(url.host, "dramatip.net") || url.host in setOf("kiss18.vip", "www.kiss18.vip", "narto-drama.com", "www.narto-drama.com", "edge.narto-drama.com") ->
         throw IOException("Short drama sources aren't included in this edition.")
+    isHlsMedia(url) || isSupportedVideoFile(url) -> SiteDownloadProvider.DIRECT
     hostMatchesDomain(url.host, "eroticmv.com") -> SiteDownloadProvider.EROTICMV
     url.host in setOf("kisskh.do", "www.kisskh.do") -> SiteDownloadProvider.KISSKH
-    isHlsMedia(url) || isSupportedVideoFile(url) -> SiteDownloadProvider.DIRECT
     else -> throw IOException("Unsupported link. Use EroticMV, KissKH, or a direct HLS/MP4/WebM URL.")
 }
 internal fun isHlsMedia(url: HttpUrl) = url.encodedPath.contains(".m3u8", true)
 internal fun isSupportedVideoFile(url: HttpUrl) = listOf(".mp4", ".m4v", ".webm").any { url.encodedPath.endsWith(it, true) } ||
     url.queryParameter("mime_type") in setOf("video_mp4", "video/mp4", "video/webm")
+internal fun siteVideoMimeType(url: HttpUrl, declaredType: String? = null): String = when {
+    isHlsMedia(url) || isHlsMimeType(declaredType) -> "application/x-mpegURL"
+    normalizedMediaType(declaredType) == "video/webm" || url.encodedPath.endsWith(".webm", true) ||
+        url.queryParameter("mime_type") == "video/webm" -> "video/webm"
+    else -> "video/mp4"
+}
 internal fun resolveProviderUrl(base: HttpUrl, raw: String): String = base.resolve(raw.trim())?.takeIf { it.username.isEmpty() && it.password.isEmpty() }?.toString()
     ?: throw IOException("The provider returned an invalid media link.")
 internal fun parseSiteDownloadSelection(input: String, episodes: List<SiteDownloadEpisode>): List<SiteDownloadEpisode> {
@@ -148,12 +154,22 @@ internal fun decodeEroticMedia(raw: String): String {
     }
     return raw.trim()
 }
-internal fun eroticVideoSource(page: String): String? {
+internal data class EroticVideoSource(val url: String, val declaredType: String? = null, val isPlayerPage: Boolean = false)
+
+internal fun eroticVideoSource(page: String): EroticVideoSource? {
     val doc = Jsoup.parse(page)
-    for ((selector, attr) in listOf("meta[property=og:video:url]" to "content", "video source[src]" to "src", "video[src]" to "src")) {
-        doc.selectFirst(selector)?.attr(attr)?.takeIf(String::isNotBlank)?.let { return it }
+    doc.selectFirst("meta[property=og:video:url]")?.attr("content")?.takeIf(String::isNotBlank)?.let { url ->
+        val type = doc.selectFirst("meta[property=og:video:type]")?.attr("content")
+        return EroticVideoSource(url, type, normalizedMediaType(type) in setOf("text/html", "application/xhtml+xml") ||
+            doc.select("iframe[src]").any { it.attr("src") == url })
     }
-    return jsonAfterMarker(page, Regex("\"single_video_url\"\\s*:"))?.takeIf { it.isJsonPrimitive }?.asString
+    for (selector in listOf("video source[src]", "video[src]")) {
+        doc.selectFirst(selector)?.let { element ->
+            element.attr("src").takeIf(String::isNotBlank)?.let { return EroticVideoSource(it, element.attr("type")) }
+        }
+    }
+    return jsonAfterMarker(page, Regex("\"single_video_url\"\\s*:"))?.takeIf { it.isJsonPrimitive }
+        ?.asString?.takeIf(String::isNotBlank)?.let { EroticVideoSource(it) }
 }
 internal fun chooseMediaVariant(variants: List<MediaVariant>, quality: String): MediaVariant {
     require(variants.isNotEmpty()) { "No supported media variants found." }

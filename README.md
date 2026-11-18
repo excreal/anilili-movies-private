@@ -71,9 +71,11 @@ verification is not guaranteed and is not automated or bypassed.
   copies to the pending destination, confirms it is readable, and publishes it
   before removing the cached source. Export failures retain the source and offer
   **Retry save**. Unsupported devices fail before queueing a new HLS export.
-- **Direct MP4/WebM:** Android DownloadManager stages files in the app's
-  `files/direct-temp` directory under Android/data. Completed files are copied
-  to the same output folder, then the temporary download is removed.
+- **Progressive MP4/WebM and HLS:** Media3 downloads selected site media into
+  its app-private cache. Completed progressive files are copied to the output
+  folder; HLS is remuxed to MP4 on supported ARM64 devices before publication.
+  Android DownloadManager is retained only to display, recover, or remove
+  historical direct-file records from older app versions.
 - **Output folder:** defaults to `Downloads/Animepahe`. Settings can choose a
   folder with Android's document picker (including a writable SD-card folder),
   or use a named subfolder under Downloads. Each new download remembers its
@@ -201,11 +203,9 @@ personal release, create and back up a private keystore outside the repository,
 then configure `ANIMEPAHE_KEYSTORE`, `ANIMEPAHE_STORE_PASSWORD`,
 `ANIMEPAHE_KEY_ALIAS`, and `ANIMEPAHE_KEY_PASSWORD` in the build environment.
 Run `./build.sh release`, then verify with SDK `apksigner verify --verbose`.
-For local signing, `build.sh` also loads `.signing/release.env` when no
-`ANIMEPAHE_KEYSTORE` is already set. This ignored file exports the same four
-variables. Back up the entire `.signing/` directory securely, including the
-keystore and credentials; neither belongs in Git. For direct Gradle builds,
-load the environment first with `source .signing/release.env`.
+Set the four signing variables in your local shell or secret manager before
+building a signed release. `build.sh` does not load credentials from the
+checkout. Keep keystores and passwords outside the repository and out of Git.
 Keep the same key for every upgrade; losing it prevents an in-place update.
 Increment `versionCode` for every distributed APK and update `versionName`.
 Never commit a keystore or passwords. Without these variables the release build

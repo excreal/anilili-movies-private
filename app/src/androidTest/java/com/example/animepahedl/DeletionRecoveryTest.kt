@@ -11,14 +11,38 @@ import org.junit.Test
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class DeletionRecoveryTest {
+    @Test fun cancelKeepsAVideoThatFinishedBeforeConfirmation() = runBlocking {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        DownloadStore.awaitReady()
+        val id = "sites:cancel-finished-${System.nanoTime()}"
+        val uri = Uri.parse("content://com.example.animepahedl.test.deletion/present-$id")
+        try {
+            Exports.put(app, id, ExportRecord("Finished before confirmation", "", "", uri = uri.toString()))
+            DownloadStore.flush()
+            val result = AndroidDownloadRepository(app).delete(id, deleteSavedFile = false)
+            assertTrue(result.message, result.succeeded)
+            assertFalse(Exports.all(app).containsKey(id))
+            assertTrue(app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)!!.use { it.moveToFirst() })
+        } finally {
+            app.contentResolver.delete(uri, null, null)
+            Exports.remove(app, id)
+            DownloadStore.operation(id, "delete", null)
+            DownloadStore.operation(id, "delete-keep-file", null)
+            DownloadStore.flush()
+        }
+    }
     @Test fun missingStagingMediaOffersFreshSourceRetryInsteadOfRetrySave() = runBlocking {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
         DownloadStore.awaitReady()
         val id = "direct:${System.nanoTime()}"
         try {
-            Exports.put(app, id, ExportRecord("Missing source fixture", "", "", error = "Saving failed"))
+            val identity = DownloadIdentity(
+                Anime("sites:DIRECT:fixture", "Missing source fixture", "", "", "Video", ""),
+                Episode("fixture", "1", "", ""), "Original", "und", "sites", "https://example.invalid/fixture.mp4"
+            )
+            Exports.put(app, id, ExportRecord("Missing source fixture", "", "", error = "Saving failed", identity = identity))
             DownloadStore.flush()
-            val repository = AndroidDownloadRepository(app, AnimeRepository())
+            val repository = AndroidDownloadRepository(app)
             withContext(Dispatchers.Main) { repository.refresh() }
             val row = repository.rows.value.first { it.id == id }
             assertTrue(DownloadAction.RETRY in row.actions)
@@ -33,7 +57,7 @@ class DeletionRecoveryTest {
         val ids = listOf("delete", "missing", "refuse", "denied").associateWith { "direct:${System.nanoTime()}" }
         ids.forEach { (kind, id) -> Exports.put(app, id, ExportRecord("Deletion fixture", "", "", uri = "content://com.example.animepahedl.test.deletion/$kind-${System.nanoTime()}")) }
         DownloadStore.flush()
-        val repository = AndroidDownloadRepository(app, AnimeRepository())
+        val repository = AndroidDownloadRepository(app)
         try {
             val results = withContext(Dispatchers.Main) { repository.deleteBatch(ids.values.toSet()) }
             assertEquals(2, results.count { it.succeeded })

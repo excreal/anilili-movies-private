@@ -90,7 +90,7 @@ private fun CatalogSourceSettingRow(title: String, description: String, value: S
 }
 
 @Composable
-internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader, onChooseFolder: () -> Unit, onPlay: (DownloadRow) -> Unit, onRemove: (String) -> Unit) {
+internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownloadViewModel, images: ImageLoader, onChooseFolder: () -> Unit, onPlay: (DownloadRow) -> Unit, onRemove: (DownloadRow) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var openGroup by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteGroup by remember { mutableStateOf<List<DownloadRow>?>(null) }
@@ -98,7 +98,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
     deleteGroup?.let { rows ->
         AlertDialog(onDismissRequest = { deleteGroup = null }, title = { Text("Remove ${rows.size} videos?") },
             text = { Text("Saved files will be deleted and unfinished downloads cancelled.") },
-            confirmButton = { TextButton(onClick = {
+            confirmButton = { TextButton(enabled = !model.deletingDownloads, onClick = {
                 deleteGroup = null
                 siteDownload.removePending(rows.filter { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet())
                 model.removeDownloads(rows.filterNot { siteDownload.isPendingRow(it.id) }.map { it.id }.toSet(), rows.filter { it.complete }.map { it.id }.toSet())
@@ -148,7 +148,6 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
         }
     }
     val ready = snapshot.ready
-    val active = snapshot.unfinished
     val visible = snapshot.rows
     val context = LocalContext.current
     var playbackRevision by remember { mutableIntStateOf(0) }
@@ -161,6 +160,11 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
     val playbackHistory = remember(context, playbackRevision) { PlaybackHistory(context) }
     val savedRecords = remember(allRows) { DownloadStore.all() }
     val openRows = snapshot.groups.firstOrNull { it.first == openGroup }?.second.orEmpty()
+    var groupWasLoaded by remember(openGroup) { mutableStateOf(false) }
+    LaunchedEffect(openGroup, openRows, snapshot.source === allRows) {
+        if (openRows.isNotEmpty()) groupWasLoaded = true
+        else if (openGroup != null && groupWasLoaded && snapshot.source === allRows) openGroup = null
+    }
     val heading = if (openGroup == null) "Downloads" else openRows.firstOrNull()?.showTitle?.ifBlank { openRows.firstOrNull()?.title.orEmpty() }.orEmpty()
     Column(Modifier.fillMaxSize()) {
         if (!model.selectionMode) Row(Modifier.fillMaxWidth().padding(start = if (openGroup == null) pagePadding else 4.dp,
@@ -172,7 +176,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                 Text(heading, style = MaterialTheme.typography.headlineLarge.copy(fontSize = 40.sp, lineHeight = 46.sp),
                     fontWeight = FontWeight.Black, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 Text(if (openGroup == null) "${snapshot.groups.size} titles · $ready saved · ${Formatter.formatShortFileSize(context, snapshot.savedBytes)}"
-                    else "${openRows.size} videos · ${openRows.count { it.complete }} saved · ${Formatter.formatShortFileSize(context, openRows.sumOf { it.bytes })}",
+                    else "${openRows.size} videos · ${openRows.count { it.complete }} saved · ${Formatter.formatShortFileSize(context, openRows.filter { it.complete }.sumOf { it.bytes })}",
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
@@ -199,6 +203,12 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                     Text(notice, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     IconButton(onClick = model::dismissDownloadNotice) { AppSymbol(AppIcon.Close, description = "Dismiss notice") }
                 }
+            }
+        } }
+        siteDownload.preparationError?.let { error -> item(key = "preparation-error", contentType = "download-notice") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                IconButton(onClick = siteDownload::dismissPreparationError) { AppSymbol(AppIcon.Close, description = "Dismiss preparation error") }
             }
         } }
         if (openGroup == null && allRows.isNotEmpty()) item(contentType = "download-filters") {
@@ -229,11 +239,12 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
             }
         }
         if (visible.isEmpty() && snapshot.source === allRows) item(contentType = "download-empty-state") {
+            val filtering = query.isNotBlank() || downloadView != "All downloads" || downloadAudio != "Any audio"
             Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (query.isNotBlank()) "No matching downloads" else "Nothing downloaded yet", style = MaterialTheme.typography.titleMedium)
-                Text(if (query.isNotBlank()) "Try a title or episode number." else "Save videos from Explore to keep them here.",
+                Text(if (filtering) "No matching downloads" else "Nothing downloaded yet", style = MaterialTheme.typography.titleMedium)
+                Text(if (filtering) "Try a different search or filter." else "Save videos from Explore to keep them here.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (query.isBlank()) TextButton(onClick = { model.showDownloads = false }) { Text("Explore videos") }
+                if (!filtering) TextButton(onClick = { model.showDownloads = false }) { Text("Explore videos") }
             }
         }
         if (openGroup == null) {
@@ -241,10 +252,11 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     groups.forEach { (groupId, episodes) ->
                         val title = episodes.first().showTitle.ifBlank { episodes.first().title.substringBefore(" · ") }
-                        val progress = downloadGroupProgress(episodes, siteDownload.preparing &&
-                            siteDownload.pending?.series?.let { "sites:${it.provider.name}:${it.id}" } == groupId)
+                        val progress = downloadGroupProgress(episodes, episodes.any {
+                            siteDownload.preparationStatus.items[it.id]?.running == true
+                        })
                         val selected = episodes.count { it.id in model.selectedDownloadIds }
-                        val bytes = episodes.sumOf { it.bytes }
+                        val bytes = episodes.filter { it.complete }.sumOf { it.bytes }
                         val lastEpisode = playbackHistory.lastEpisode("series:${groupId.removePrefix("sites:")}")
                         val continued = episodes.firstOrNull { row ->
                             val key = savedRecords[row.id]?.identity?.locator?.takeIf(String::isNotBlank) ?: row.savedUri
@@ -295,10 +307,21 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                             row.showTitle.ifBlank { parts.first() } else "Episode ${row.episodeNumber.ifBlank { parts.getOrNull(1)?.removePrefix("Episode ").orEmpty() }}") +
                             row.audioCode?.takeIf { it.isNotBlank() && it != "und" }?.let { " · ${audioTag(it)}" }.orEmpty(),
                         subtitle = (row.quality ?: parts.getOrNull(2).orEmpty()).takeUnless { it in setOf("Original", "Best") }.orEmpty(), artworkUrl = row.thumbnail,
-                        status = listOfNotNull(if (watched) "Watched" else resumeLabel, if (row.complete) "In Downloads folder" else friendlyDownloadStatus(row.status),
-                            row.bytes.takeIf { it > 0 }?.let { Formatter.formatShortFileSize(context, it) + if (row.totalBytes > 0 && !row.complete) " / ${Formatter.formatShortFileSize(context, row.totalBytes)}" else "" },
+                        status = listOfNotNull(if (watched) "Watched" else resumeLabel, if (row.complete && !row.failed) "In Downloads folder" else friendlyDownloadStatus(row.status),
+                            row.bytes.takeIf { it > 0 || row.estimatedTotalBytes > 0 }?.let { bytes ->
+                                val size = Formatter.formatShortFileSize(context, bytes)
+                                when {
+                                    row.complete -> size
+                                    row.totalBytes > 0 -> "$size / ${Formatter.formatShortFileSize(context, row.totalBytes)}"
+                                    row.estimatedTotalBytes > 0 -> "$size / ≈${Formatter.formatShortFileSize(context, row.estimatedTotalBytes)}"
+                                    row.save == SaveState.PREPARING -> "$size written"
+                                    row.save == SaveState.CHECKING -> "$size checked"
+                                    row.save == SaveState.COPYING -> "$size copied"
+                                    else -> "$size downloaded"
+                                }
+                            },
                             row.percent.takeIf { it >= 0 && !row.complete }?.let { "${it.toInt()}%" }).joinToString(" · "),
-                        playable = row.complete, failed = row.failed, watched = watched,
+                        playable = row.complete && !row.deleting, failed = row.failed, watched = watched,
                         watchProgress = if (!watched && historyKey.isNotBlank()) playbackHistory.fraction(historyKey) else 0f,
                         progress = if (showProgress && row.percent >= 0) row.percent / 100f else null,
                         indeterminate = showProgress && row.percent < 0),
@@ -322,8 +345,9 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                                     DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_details)) }, onClick = { menu = false; detailRow = row })
                                     if (row.complete) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_relink_video)) }, onClick = { menu = false; relinkId = row.id; relinkPicker.launch(arrayOf("video/*")) })
                                     if (row.complete) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_remove_record_keep_file)) }, onClick = { menu = false; forgetId = row.id })
-                                    if (!row.complete && !siteDownload.isPendingRow(row.id)) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_move_to_front)) }, onClick = { menu = false; model.prioritize(row.id) })
-                                    if (row.complete) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_play)) }, onClick = { menu = false; onPlay(row) })
+                                    if (!pendingRow && (DownloadAction.PAUSE in row.actions || DownloadAction.RESUME in row.actions))
+                                        DropdownMenuItem(text = { Text("Prioritize and pause other transfers") }, onClick = { menu = false; model.prioritize(row.id) })
+                                    if (row.complete && !row.deleting) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_play)) }, onClick = { menu = false; onPlay(row) })
                                     if (DownloadAction.PAUSE in row.actions || DownloadAction.RESUME in row.actions) {
                                         val paused = DownloadAction.RESUME in row.actions
                                         DropdownMenuItem(text = { Text(if (siteDownload.isPendingRow(row.id)) { if (paused) "Resume link preparation" else "Pause link preparation" } else if (paused) "Resume" else "Pause") }, onClick = {
@@ -341,7 +365,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                                             if (row.complete) "Delete saved video" else "Cancel download",
                                             color = MaterialTheme.colorScheme.error
                                         ) },
-                                        onClick = { menu = false; onRemove(row.id) }
+                                        onClick = { menu = false; onRemove(row) }
                                     )
                                 }
                             }

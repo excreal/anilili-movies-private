@@ -34,4 +34,15 @@ class DownloadGroupProgressTest {
         assertEquals("Preparing links", downloadGroupProgress(saved, preparingLinks = true).label)
         assertTrue(downloadGroupProgress(saved, preparingLinks = true).running)
     }
+
+    @Test fun hlsUsesSelectedTrackSamplesInsteadOfAnUnverifiedTransferTotal() {
+        assertEquals(-1L, displayTransferTotal(250_000_000, 1_100_000_000, hls = true))
+        assertEquals(500_000_000L, displayTransferTotal(250_000_000, 500_000_000, hls = false))
+        assertNull(projectHlsTrackSize(60_000_000, 1_000_000, 30_000_000))
+        val projected = projectHlsTrackSize(60_000_000, 30_000_000, 250_000_000)
+        assertEquals(500_000_000L, projected)
+        assertEquals(50f, estimatedTransferProgress(22.7f, 250_000_000, projected!!), 0.01f)
+        assertEquals(99f, estimatedTransferProgress(99f, 500_000_000, projected), 0.01f)
+        assertEquals(-1f, normalizedProgress(Float.NaN), 0.01f)
+    }
 }

@@ -80,7 +80,7 @@ internal fun CatalogScreen(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { model.refresh() }))
                     FilledIconButton(onClick = { filters = true }, modifier = Modifier.size(48.dp),
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)) {
-                        AppSymbol(AppIcon.Sort, description = "Select source")
+                        AppSymbol(AppIcon.More, description = "Choose source")
                     }
                 }
             }
@@ -148,7 +148,7 @@ internal fun CatalogScreen(
         }
     }
     if (filters) ModalBottomSheet(onDismissRequest = { filters = false }) {
-        Text("Source", Modifier.padding(20.dp), style = MaterialTheme.typography.titleLarge)
+        Text("Choose source", Modifier.padding(20.dp), style = MaterialTheme.typography.titleLarge)
         model.availableSources.forEach { source ->
             TextButton(onClick = { model.select(source); filters = false }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 RadioButton(selected = model.source == source, onClick = null)

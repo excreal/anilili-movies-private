@@ -1,6 +1,6 @@
 # Supported-site data APIs
 
-This is an in-process Kotlin API for the Android repository, independent of its UI card models. It does not start an HTTP server or change which metadata the UI displays. The common contract, registry, shared HTML parser, and all five provider extractors live together in `app/src/main/java/com/example/animepahedl/metadata/`. Provider-specific parsing and endpoint behavior stays in that folder; the registry selects an implementation by source or URL.
+This is an in-process Kotlin API for the Android repository, independent of its UI card models. It does not start an HTTP server or change which metadata the UI displays. The common contract, registry, shared HTML parser, and active provider extractors live together in `app/src/main/java/com/example/animepahedl/metadata/`. Provider-specific parsing and endpoint behavior stays in that folder; the registry selects an implementation by source or URL.
 
 ## Contract
 
@@ -15,7 +15,7 @@ Empty/null values mean the site did not supply that information in the inspected
 
 ## Scope and verification
 
-The five metadata sites are Dramatip, Kiss18, Narto Drama, EroticMV and KissKH. AnimePahe is intentionally excluded because its catalogue/API pages returned Cloudflare 403 challenges in the inspected environment; this does not affect the app's existing AnimePahe download features. Direct MP4/WebM/HLS inputs remain supported by the existing media resolver; a bare media URL does not supply a catalogue, ratings or a genre taxonomy. The user's Korean-only KissKH browsing restriction remains in force.
+The active registry contains EroticMV and KissKH. Other provider names may remain in historical/reference code, but are not selectable through `SiteMetadataApis`. AnimePahe is intentionally excluded because its catalogue/API pages returned Cloudflare 403 challenges in the inspected environment; this does not affect the app's existing AnimePahe download features. Direct MP4/WebM/HLS inputs remain supported by the existing media resolver; a bare media URL does not supply a catalogue, ratings or a genre taxonomy. The user's Korean-only KissKH browsing restriction remains in force.
 
 Each site has a dedicated subagent audit and document in this directory. Live HTTP/page/script evidence, blocked requests and parser limitations are recorded per site. No telemetry/voting/AI-subtitle-job or account-writing endpoints are invoked by metadata reads.
 
@@ -24,7 +24,7 @@ Each site has a dedicated subagent audit and document in this directory. Live HT
 
 ```kotlin
 val apis = SiteMetadataApis.forApp(context) // reuses the app's scoped site sessions
-val source = apis[MetadataSite.DRAMATIP]
+val source = apis[MetadataSite.EROTICMV]
 val listing = source.browse(MetadataBrowseQuery(filters = mapOf("category" to "popular")))
 val detail = source.details(listing.items.first().url)
 val episode = source.episode(detail.episodes.first().url)

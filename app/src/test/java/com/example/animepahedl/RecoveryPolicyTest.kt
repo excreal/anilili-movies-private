@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RecoveryPolicyTest {
+    @Test fun malformedStoredVerificationCannotTriggerAStartupFailureOrOpenANonHttpLink() {
+        assertNull(parseMediaVerification("id", """{"id":"id","url":null,"browserUrl":"https://example.test/"}"""))
+        assertNull(parseMediaVerification("id", """{"id":"id","url":"https://example.test/video","browserUrl":"file:///video"}"""))
+        assertNull(parseMediaVerification("different", """{"id":"id","url":"https://example.test/video","browserUrl":"https://example.test/"}"""))
+        assertEquals("https://example.test/", parseMediaVerification("id",
+            """{"id":"id","url":"https://example.test/video","browserUrl":"https://example.test/"}""")?.browserUrl)
+    }
+
+    @Test fun expiredOneTimeLinksAreNotAutomaticallyResubmittedAsTransientNetworkFailures() {
+        assertFalse(isTransientTransferHttpStatus(403))
+        assertFalse(isTransientTransferHttpStatus(410))
+        assertTrue(isTransientTransferHttpStatus(429))
+        assertTrue(isTransientTransferHttpStatus(503))
+        assertTrue(isTransientTransferHttpStatus(null))
+    }
     @Test fun typingDefersChallengeUntilIdle() {
         val gate = SearchVerificationGate()
         val generation = gate.edit("nar", 0)
@@ -56,10 +71,37 @@ class RecoveryPolicyTest {
             assertEquals(stage == SaveState.FAILED, DownloadAction.RETRY_SAVE in row.actions)
         }
     }
+    @Test fun recoveryEligibilityMatchesPersistedSourceContext() {
+        val identity = DownloadIdentity(
+            Anime("sites:DIRECT:clip", "Direct video", "", "", "Video", ""),
+            Episode("clip", "1", "", ""), "Original", "und", "sites", "https://example.com/clip.mp4"
+        )
+        val media = ResolvedMedia("https://cdn.example.com/clip.mp4", "Original", "und", mimeType = "video/mp4")
+        val directLink = ExportRecord("clip", "", "", identity = identity, media = media)
+        assertEquals(DownloadRecoveryEligibility(retryable = true, transferControllable = true),
+            downloadRecoveryEligibility(directLink))
+        // A fresh source retry needs the locator, while pause/resume needs the persisted request context.
+        assertEquals(DownloadRecoveryEligibility(retryable = true, transferControllable = false),
+            downloadRecoveryEligibility(directLink.copy(media = null)))
+        val legacy = directLink.copy(identity = identity.copy(source = null, locator = null))
+        assertEquals(DownloadRecoveryEligibility(retryable = false, transferControllable = false),
+            downloadRecoveryEligibility(legacy))
+        assertEquals(DownloadRecoveryEligibility(retryable = false, transferControllable = false),
+            downloadRecoveryEligibility(null))
+    }
     @Test fun recoveryActionsAreEngineAndStateSpecific() {
-        assertTrue(DownloadAction.RETRY in DownloadRow("direct:1", "episode", TransferState.FAILED, 0f).actions)
+        assertFalse(DownloadAction.RETRY in DownloadRow("direct:1", "episode", TransferState.FAILED, 0f).actions)
         assertFalse(DownloadAction.PAUSE in DownloadRow("direct:1", "episode", TransferState.DOWNLOADING, 0f).actions)
-        assertTrue(DownloadAction.RESUME in DownloadRow("hls", "episode", TransferState.PAUSED, 0f).actions)
+        assertTrue(DownloadAction.RESUME in DownloadRow("site-hls", "episode", TransferState.PAUSED, 0f,
+            transferControllable = true).actions)
+        assertTrue(DownloadAction.RESUME in DownloadRow("site-direct-video", "episode", TransferState.PAUSED, 0f,
+            transferControllable = true).actions)
+        assertTrue(DownloadAction.RETRY in DownloadRow("site-direct", "episode", TransferState.FAILED, 0f,
+            retryable = true, transferControllable = true).actions)
+        val orphanedLegacy = DownloadRow("legacy-hls", "episode", TransferState.PAUSED, 0f)
+        assertFalse(DownloadAction.RESUME in orphanedLegacy.actions)
+        assertFalse(DownloadAction.RETRY in orphanedLegacy.copy(transfer = TransferState.FAILED).actions)
+        assertTrue(DownloadAction.DELETE in orphanedLegacy.actions)
         assertEquals(setOf(DownloadAction.DELETE), DownloadRow("hls", "episode", TransferState.DOWNLOADING, 0f, deleting = true).actions)
     }
     @Test fun operationIdentitiesCannotOverwriteOtherRecoveryActions() {

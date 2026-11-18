@@ -49,6 +49,8 @@ internal class ExistingOutputIndex(private val context: Context, private val tre
     private val root = tree.toUri()
     private var shows: List<Document>? = null
     private val files = mutableMapOf<String, List<Document>>()
+    fun verifyReadable() { showDirectories() }
+    private fun showDirectories(): List<Document> = shows ?: children(DocumentsContract.getTreeDocumentId(root)).also { shows = it }
     private fun children(id: String): List<Document> {
         if (!hasOutputFolderAccess(context, tree)) throw OutputFolderAccessRequired()
         try {
@@ -64,7 +66,7 @@ internal class ExistingOutputIndex(private val context: Context, private val tre
     }
     fun find(location: DownloadLocation): ExistingVideo? {
         if (!hasOutputFolderAccess(context, tree)) throw OutputFolderAccessRequired()
-        val directories = shows ?: children(DocumentsContract.getTreeDocumentId(root)).also { shows = it }
+        val directories = showDirectories()
         val show = directories.firstOrNull { existingVideoName(it.name) == existingVideoName(location.showFolder) && it.mime == DocumentsContract.Document.MIME_TYPE_DIR }
         // Also support linking a single show folder (Downloads itself cannot always be selected).
         val entries = (show?.let { files.getOrPut(it.id) { children(it.id) } }.orEmpty() +
