@@ -17,16 +17,16 @@ internal class DeferredDownloader(
     private val lock = Any()
     private var delegate: Downloader? = null
     private var cancelled = false
-    private var refreshed = false
+    private var renewing = false
 
     override fun download(progressListener: Downloader.ProgressListener?) {
         try {
-            currentOrCreate(create).download(progressListener)
+            currentOrCreate(if (renewing) requireNotNull(refresh) else create).download(progressListener)
         } catch (failure: Exception) {
             val renew = refresh ?: throw failure
             if (!expired(failure)) throw failure
-            if (refreshed) throw MediaLinkExpired(failure)
-            refreshed = true
+            if (renewing) throw MediaLinkExpired(failure)
+            renewing = true
             synchronized(lock) { delegate = null }
             try { currentOrCreate(renew).download(progressListener) }
             catch (next: Exception) {

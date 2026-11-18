@@ -9,6 +9,9 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -126,24 +129,39 @@ object OfflineDownloads {
                 val record = requireNotNull(Exports.all(app)[request.id]) { "This download record is missing. Retry to resolve this episode again." }
                 val identity = requireNotNull(record.identity?.takeIf { it.isSiteDownload }) { "Video link unavailable" }
                 val cookies = SiteDownloadCookieStore(app)
-                val media = if (!renew && record.media != null) record.media else {
+                val cachePrefix = downloadCachePrefix(request.id, record)
+                val refresh = renew || record.refreshMedia
+                val media = if (!refresh && record.media != null) record.media else {
                     val locator = requireNotNull(identity.locator?.takeIf(String::isNotBlank)) { "Video link unavailable" }
                     resolvingLinks.add(request.id)
                     updates.tryEmit(Unit)
                     try {
                         runBlocking {
-                            val resolved = cookies.applyTo(appSiteDownloadRepository(cookieHeader = cookies::headerFor)
+                            val fresh = cookies.applyTo(appSiteDownloadRepository(cookieHeader = cookies::headerFor)
                                 .resolve(locator, identity.quality, cookies.headerFor(locator), includeSubtitles = false))
                             check(!Exports.deleting(request.id)) { "Download removed" }
                             val current = requireNotNull(Exports.all(app)[request.id]) { "Download removed" }
+                            val resolved = fresh.copy(subtitles = fresh.subtitles.orEmpty().ifEmpty { current.media?.subtitles.orEmpty() })
                             val quality = identity.quality.takeIf {
                                 resolved.isHls() && it.endsWith("p") && it.dropLast(1).toIntOrNull() != null
                             } ?: resolved.quality
-                            if (resolved.url != current.media?.url) hlsSamples.remove(request.id)
-                            Exports.put(app, request.id, current.copy(quality = quality, audio = resolved.audio, media = resolved))
+                            val oldHls = current.media?.takeIf { runCatching { it.isHls() }.getOrDefault(false) }
+                            if (refresh && oldHls != null && !identity.anime.session.startsWith("sites:DIRECT:")) {
+                                val sharedLegacyCache = cachePrefix.isEmpty() && Exports.all(app).any { (id, item) ->
+                                    id != request.id && !item.scopedCache && item.uri.isEmpty() && item.media != null && !Exports.deleting(id)
+                                }
+                                if (cachePrefix.isNotEmpty() || (oldHls.url == resolved.url && !sharedLegacyCache)) {
+                                    withContext(Dispatchers.IO) { resetCachedHlsPlaylists(cache, oldHls.url.toUri(), cachePrefix) }
+                                }
+                            }
+                            check(!Exports.deleting(request.id)) { "Download removed" }
+                            if (refresh || resolved.url != current.media?.url) hlsSamples.remove(request.id)
+                            Exports.put(app, request.id, current.copy(quality = quality, audio = resolved.audio, media = resolved, refreshMedia = false))
                             DownloadStore.flush()
                             resolved
                         }
+                    } catch (challenge: VerificationRequired) {
+                        throw IllegalStateException("Verify session", challenge)
                     } finally {
                         resolvingLinks.remove(request.id)
                         updates.tryEmit(Unit)
@@ -159,12 +177,12 @@ object OfflineDownloads {
                 val resolving = ResolvingDataSource.Factory(upstream) { dataSpec ->
                     dataSpec.withRequestHeaders(mediaRequestHeaders(media, dataSpec.uri.toString()))
                 }
-                val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
+                val factory = offlineCacheFactory(cache, cachePrefix)
                     .setUpstreamDataSourceFactory(resolving)
                 return if (media.isHls()) {
                     check(File(app.applicationInfo.nativeLibraryDir, "libffmpeg_exec.so").exists()) { "HLS requires an ARM64 device" }
                     val quality = Exports.all(app)[request.id]?.quality ?: media.quality
-                    selectedHlsDownloader(actualRequest, quality, factory, executor) { sample ->
+                    selectedHlsDownloader(actualRequest, quality, factory, executor, cachePrefix) { sample ->
                         if (hlsSamples.put(request.id, sample) != sample) updates.tryEmit(Unit)
                     }
                 } else androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor).createDownloader(actualRequest)
@@ -172,14 +190,18 @@ object OfflineDownloads {
             DeferredDownloader(create = { createTransfer(false) }, refresh = { createTransfer(true) }, expired = ::isExpiredMediaResponse, removeCached = {
                 // Cache removal never needs a live provider session or output-folder access.
                 val records = Exports.all(app)
-                val actual = request.forResolvedMedia(records[request.id]?.media)
-                val stillNeeded = isHlsMimeType(actual.mimeType) && records.any { (id, item) ->
-                    id != request.id && item.uri.isEmpty() && !Exports.deleting(id) && item.media?.url == actual.uri.toString()
-                }
-                if (!stillNeeded && actual.mimeType != null) {
-                    val factory = androidx.media3.datasource.cache.CacheDataSource.Factory().setCache(cache)
-                    androidx.media3.exoplayer.offline.DefaultDownloaderFactory(factory, executor)
-                        .createDownloader(actual).remove()
+                val record = records[request.id]
+                val prefix = scopedDownloadCachePrefix(request.id)
+                cache.keys.filter { it.startsWith(prefix) }.forEach(cache::removeResource)
+                if (record?.scopedCache != true) {
+                    val actual = request.forResolvedMedia(record?.media)
+                    val stillNeeded = records.any { (id, item) ->
+                        id != request.id && !item.scopedCache && item.uri.isEmpty() && !Exports.deleting(id) && item.media?.url == actual.uri.toString()
+                    }
+                    if (!stillNeeded && actual.mimeType != null) {
+                        androidx.media3.exoplayer.offline.DefaultDownloaderFactory(offlineCacheFactory(cache, ""), executor)
+                            .createDownloader(actual).remove()
+                    }
                 }
             })
         }
@@ -251,6 +273,14 @@ object OfflineDownloads {
 }
 
 internal data class MediaVerification(val id: String, val url: String, val browserUrl: String, val time: Long)
+
+private fun scopedDownloadCachePrefix(id: String): String = "offline/$id/"
+
+internal fun downloadCachePrefix(id: String, record: ExportRecord?): String = if (record?.scopedCache == true) scopedDownloadCachePrefix(id) else ""
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun offlineCacheFactory(cache: Cache, prefix: String): CacheDataSource.Factory = CacheDataSource.Factory()
+    .setCache(cache).setCacheKeyFactory { prefix + CacheKeyFactory.DEFAULT.buildCacheKey(it) }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun DownloadRequest.forResolvedMedia(media: ResolvedMedia?): DownloadRequest {

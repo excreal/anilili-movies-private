@@ -23,7 +23,7 @@ data class DownloadRow(val id: String, val title: String, val transfer: Transfer
     val thumbnail: String = "", val audioCode: String? = null, val quality: String? = null,
     val save: SaveState = SaveState.NONE, val availability: Availability = Availability.STAGING,
     val failure: FailureReason? = null, val explanation: String? = null, val deleting: Boolean = false, val showId: String = "", val episodeId: String = "", val showTitle: String = "", val episodeNumber: String = "", val retryable: Boolean = false, val transferControllable: Boolean = false,
-    val estimatedTotalBytes: Long = -1L) {
+    val estimatedTotalBytes: Long = -1L, val requestedQuality: String? = null) {
     val complete get() = availability == Availability.SAVED
     val saving get() = save in setOf(SaveState.WAITING, SaveState.PREPARING, SaveState.CHECKING, SaveState.COPYING)
     val failed get() = transfer == TransferState.FAILED || save == SaveState.FAILED || failure != null
@@ -84,11 +84,16 @@ internal data class DownloadIdentity(val anime: Anime, val episode: Episode, val
 
 internal data class DownloadRecoveryEligibility(val retryable: Boolean, val transferControllable: Boolean)
 
+internal fun matchesDownloadQuality(requested: String, existingRequest: String?, resolved: String?): Boolean = when (requested) {
+    "Best", "Original" -> existingRequest in setOf("Best", "Original")
+    else -> requested == existingRequest || requested == resolved
+}
+
 internal fun matchesQueuedVideo(identity: DownloadIdentity, existing: ExportRecord, id: String): Boolean {
     if (id == identity.key) return true
     val other = existing.identity ?: return false
     return other.isSiteDownload && other.anime.session == identity.anime.session && other.episode.session == identity.episode.session &&
-        (identity.quality == "Best" || identity.quality == other.quality || identity.quality == existing.quality)
+        matchesDownloadQuality(identity.quality, other.quality, existing.quality)
 }
 
 /** Recovery actions must match the source context required by their implementation. */

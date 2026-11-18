@@ -12,20 +12,16 @@ internal fun isPreparedQueueRow(id: String) = id.startsWith("preparing:")
 /** Every selected item is visible immediately, while real downloads replace placeholders by source identity. */
 internal fun mergePreparedQueueRows(actual: List<DownloadRow>, pending: SiteDownloadPreparation?, status: PreparationStatus): List<DownloadRow> {
     if (pending == null) return actual
-    data class EpisodeMatch(val showId: String, val id: String, val number: String, val quality: String?)
-    val existing = buildSet {
-        for (row in actual) if (!row.failed && !row.deleting) {
-            val match = EpisodeMatch(row.showId, row.episodeId, row.episodeNumber.takeIf { row.episodeId.isBlank() }.orEmpty(), row.quality)
-            add(match)
-            add(match.copy(quality = null)) // "Best" may match any already queued quality.
-        }
+    data class EpisodeMatch(val showId: String, val id: String, val number: String = "")
+    val existing = actual.filter { !it.failed && !it.deleting }.groupBy { row ->
+        EpisodeMatch(row.showId, row.episodeId, row.episodeNumber.takeIf { row.episodeId.isBlank() }.orEmpty())
     }
     val queued = pending.batches().flatMap { batch ->
         val showId = "sites:${batch.series.provider.name}:${batch.series.id}"
-        val quality = batch.quality.takeUnless { it == "Best" }
         batch.episodes.filterNot { episode ->
-            EpisodeMatch(showId, episode.id, "", quality) in existing ||
-                EpisodeMatch(showId, "", episode.displayNumber, quality) in existing
+            val matchingEpisode = existing[EpisodeMatch(showId, episode.id)].orEmpty() +
+                existing[EpisodeMatch(showId, "", episode.displayNumber)].orEmpty()
+            matchingEpisode.any { matchesDownloadQuality(batch.quality, it.requestedQuality ?: it.quality, it.quality) }
         }.map { episode ->
             val id = pendingEpisodeRowId(batch.series, episode, batch.quality)
             val status = status.items[id] ?: if (status.items.isEmpty()) status else PreparationStatus(pending = true)

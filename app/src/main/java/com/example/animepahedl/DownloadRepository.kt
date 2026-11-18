@@ -109,7 +109,8 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
             // downloader factory. Re-adding an orphaned engine request fails at that lookup.
             val eligibility = downloadRecoveryEligibility(record)
             val metadata = row.copy(title = record?.episodeTitle() ?: row.title, thumbnail = artwork.getString(row.id.take(36), null) ?: record?.thumbnail.orEmpty(),
-                audioCode = record?.audio, quality = record?.quality, showId = record?.identity?.anime?.session.orEmpty(), episodeId = record?.identity?.episode?.session.orEmpty(), showTitle = record?.identity?.anime?.title ?: record?.showTitle.orEmpty(), episodeNumber = record?.identity?.episode?.number ?: record?.episodeNumber.orEmpty(),
+                audioCode = record?.audio, quality = record?.quality, requestedQuality = record?.identity?.quality,
+                showId = record?.identity?.anime?.session.orEmpty(), episodeId = record?.identity?.episode?.session.orEmpty(), showTitle = record?.identity?.anime?.title ?: record?.showTitle.orEmpty(), episodeNumber = record?.identity?.episode?.number ?: record?.episodeNumber.orEmpty(),
                 retryable = eligibility.retryable, transferControllable = eligibility.transferControllable,
                 explanation = if (row.transfer == TransferState.FAILED && !eligibility.retryable)
                     "Add video again" else row.explanation)
@@ -131,6 +132,7 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
         } + exports.filterValues { it.uri.isNotEmpty() }.map { (id, record) ->
             DownloadRow(id, record.episodeTitle(), TransferState.COMPLETE, 100f, record.bytes, record.bytes, record.uri,
                 artwork.getString(id.take(36), null) ?: record.thumbnail.orEmpty(), record.audio, record.quality,
+                requestedQuality = record.identity?.quality,
                 availability = Availability.SAVED, failure = if (id in deleting) FailureReason.DELETION else if (record.error.isNotBlank()) FailureReason.FOLDER_ACCESS else null,
                 explanation = deleting[id]?.let { if (it.isBlank()) "Removing" else "Couldn’t remove" }
                     ?: "Choose folder".takeIf { record.error.isNotBlank() }, deleting = id in deleting, showId = record.identity?.anime?.session.orEmpty(), episodeId = record.identity?.episode?.session.orEmpty(), showTitle = record.identity?.anime?.title ?: record.showTitle.orEmpty(), episodeNumber = record.identity?.episode?.number ?: record.episodeNumber.orEmpty())
@@ -236,7 +238,10 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
         val manager = withContext(Dispatchers.Main.immediate) { OfflineDownloads.manager(app) }
         if (previous == null) for ((existingId, record) in Exports.all(app)) {
             if (Exports.deleting(existingId) || !matchesQueuedVideo(identity, record, existingId)) continue
-            if (record.uri.isNotEmpty()) return existingId
+            if (record.uri.isNotEmpty()) {
+                if (missingSavedFiles(app, mapOf(existingId to record)).isEmpty()) return existingId
+                continue
+            }
             val existing = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(existingId) }
             // A durable record alone does not prove the engine accepted the request. A process
             // may have died between flush() and sendAddDownload(), or the transfer may have failed.
@@ -244,9 +249,10 @@ internal class AndroidDownloadRepository(private val app: Context) : DownloadRep
         }
         val title = identity.anime.title + (if (identity.isSingleVideo) "" else " · Episode ${identity.episode.number}")
         val record = previous?.copy(title = title, showTitle = identity.anime.title, episodeNumber = identity.episode.number,
-            error = "", uri = "", identity = identity)
+            error = "", uri = "", identity = identity, refreshMedia = true)
             ?: ExportRecord(title, settings.outputTree, settings.outputFolder, thumbnail = identity.anime.poster,
-                audio = identity.audio, quality = identity.quality, showTitle = identity.anime.title, episodeNumber = identity.episode.number, identity = identity)
+                audio = identity.audio, quality = identity.quality, showTitle = identity.anime.title,
+                episodeNumber = identity.episode.number, identity = identity, scopedCache = true)
         // The index stores the stable locator. The actual media URL belongs to a running task.
         if (Exports.deleting(id)) error("This episode is being removed. Try again after removal finishes.")
         val request = DownloadRequest.Builder(id, locator.toUri()).setData(title.toByteArray()).build()

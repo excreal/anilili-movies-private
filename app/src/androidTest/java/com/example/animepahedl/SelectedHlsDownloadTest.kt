@@ -8,7 +8,6 @@ import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.offline.DownloadRequest
@@ -50,13 +49,30 @@ class SelectedHlsDownloadTest {
         assertEquals(resources.keys, download(gateway, "${cdn}media.m3u8", resources).toSet())
     }
 
+    @Test fun renewalRereadsSameMasterAndChildWithoutDroppingCachedSegments() {
+        val root = "https://fixture.invalid/master.m3u8"
+        val child = "https://fixture.invalid/media.m3u8"
+        val previous = "https://fixture.invalid/old.ts"
+        val replacement = "https://fixture.invalid/new.ts"
+        val master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1920x1080\nmedia.m3u8\n".toByteArray()
+        val initial = mapOf(root to master, child to mediaPlaylist("old.ts").toByteArray(), previous to ByteArray(500))
+        val renewed = mapOf(root to master, child to mediaPlaylist("new.ts").toByteArray(), replacement to ByteArray(700))
+        val requests = download(root, root, initial, renewed)
+        assertEquals(initial.keys, requests.take(3).toSet())
+        assertEquals(renewed.keys, requests.drop(3).toSet())
+    }
+
     private fun mediaPlaylist(segment: String) = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\n$segment\n#EXT-X-ENDLIST\n"
 
-    private fun download(gateway: String, redirect: String, resources: Map<String, ByteArray>): List<String> {
+    private fun download(gateway: String, redirect: String, resources: Map<String, ByteArray>,
+        renewed: Map<String, ByteArray> = emptyMap()): List<String> {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(app.cacheDir, "hls-selection-${UUID.randomUUID()}")
         val cache = SimpleCache(directory, NoOpCacheEvictor(), StandaloneDatabaseProvider(app))
+        val prefix = "offline/fixture/"
         val requests = mutableListOf<String>()
+        var available = resources
+        var openedRoot = false
         try {
             val upstream = DataSource.Factory {
                 object : DataSource {
@@ -65,9 +81,12 @@ class SelectedHlsDownloadTest {
                     override fun addTransferListener(transferListener: TransferListener) = Unit
                     override fun open(dataSpec: DataSpec): Long {
                         val url = dataSpec.uri.toString()
-                        if (url == gateway && url in requests) throw IOException("One-time URL already opened")
+                        if (url == gateway) {
+                            if (openedRoot) throw IOException("One-time URL already opened")
+                            openedRoot = true
+                        }
                         requests += url
-                        val payload = resources[url] ?: throw IOException("Unexpected HLS request: $url")
+                        val payload = available[url] ?: throw IOException("Unexpected HLS request: $url")
                         current = if (url == gateway) Uri.parse(redirect) else dataSpec.uri
                         val source = ByteArrayDataSource(payload)
                         data = source
@@ -78,10 +97,25 @@ class SelectedHlsDownloadTest {
                     override fun close() { data?.close(); data = null; current = null }
                 }
             }
-            val factory = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(upstream)
             val request = DownloadRequest.Builder("fixture", Uri.parse(gateway)).setMimeType(MimeTypes.APPLICATION_M3U8).build()
-            selectedHlsDownloader(request, "Best", factory, Executor { it.run() }).download(null)
+            fun runTransfer() {
+                val factory = offlineCacheFactory(cache, prefix).setUpstreamDataSourceFactory(upstream)
+                selectedHlsDownloader(request, "Best", factory, Executor { it.run() }, prefix).download(null)
+            }
+            runTransfer()
             assertEquals(1, requests.count { it == gateway })
+            assertTrue(cache.keys.all { it.startsWith(prefix) })
+            if (renewed.isNotEmpty()) {
+                val oldSegments = cache.keys.filter { it.endsWith(".ts") }
+                assertTrue(oldSegments.isNotEmpty())
+                resetCachedHlsPlaylists(cache, request.uri, prefix)
+                assertTrue(cache.keys.containsAll(oldSegments))
+                available = renewed
+                openedRoot = false
+                runTransfer()
+                assertEquals(2, requests.count { it == gateway })
+                assertTrue(cache.keys.containsAll(oldSegments))
+            }
             return requests
         } finally {
             cache.release()

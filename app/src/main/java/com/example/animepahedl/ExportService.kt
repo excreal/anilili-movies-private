@@ -19,7 +19,8 @@ internal data class ExportRecord(val title: String, val tree: String, val folder
     val thumbnail: String? = null, val audio: String? = null, val quality: String? = null,
     val showTitle: String? = null, val episodeNumber: String? = null,
     val identity: DownloadIdentity? = null, val pendingUri: String? = null,
-    val media: ResolvedMedia? = null, val sourceBytes: Long = 0L, val durationUs: Long = 0L)
+    val media: ResolvedMedia? = null, val sourceBytes: Long = 0L, val durationUs: Long = 0L,
+    val refreshMedia: Boolean = false, val scopedCache: Boolean = false)
 
 internal data class ExportProgress(val stage: String, val percent: Float, val bytes: Long = 0, val totalBytes: Long = -1) {
     companion object {
@@ -392,8 +393,9 @@ class ExportService : Service() {
         val download = OfflineDownloads.manager(this).downloadIndex.getDownload(id)
             ?: error("Cached media is unavailable. Retry download.")
         require(download.state == Download.STATE_COMPLETED) { "Download is not complete" }
-        val actual = download.request.forResolvedMedia(Exports.all(this)[id]?.media)
-        copyCachedProgressive(OfflineDownloads.cache, actual, download.contentLength, destination, progress)
+        val record = Exports.all(this)[id]
+        val actual = download.request.forResolvedMedia(record?.media)
+        copyCachedProgressive(OfflineDownloads.cache, actual, download.contentLength, destination, downloadCachePrefix(id, record), progress)
     }
 
     private class ExistingVideoFound(val video: ExistingVideo) : java.io.IOException("The requested video is already saved.")

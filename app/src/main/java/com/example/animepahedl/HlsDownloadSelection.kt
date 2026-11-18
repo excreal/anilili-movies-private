@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.media3.common.StreamKey
 import androidx.media3.datasource.DataSourceInputStream
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.hls.offline.HlsDownloader
 import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
@@ -59,9 +60,18 @@ internal fun cachedHlsMediaPlaylists(root: CachedHlsPlaylist, keys: List<StreamK
         else -> throw IOException("Unsupported HLS playlist")
     }
 
+/** Refresh signed segment URLs while keeping byte ranges from the same transfer available. */
+internal fun resetCachedHlsPlaylists(cache: Cache, uri: Uri, prefix: String) {
+    val children = runCatching {
+        val root = readHlsPlaylist(offlineCacheFactory(cache, prefix).createDataSource(), uri)
+        (HlsPlaylistParser().parse(root.uri, root.text.byteInputStream()) as? HlsMultivariantPlaylist)?.mediaPlaylistUrls.orEmpty()
+    }.getOrDefault(emptyList())
+    (children + uri).distinct().forEach { cache.removeResource(prefix + it) }
+}
+
 /** Called inside the download task. The first request fills the cache the downloader will read. */
 internal fun selectedHlsDownloader(request: DownloadRequest, quality: String, factory: CacheDataSource.Factory, executor: Executor,
-    onSample: (HlsTransferSample) -> Unit = {}): Downloader {
+    cachePrefix: String = "", onSample: (HlsTransferSample) -> Unit = {}): Downloader {
     val root = readHlsPlaylist(factory.createDataSourceForDownloading(), request.uri)
     if (root.uri != request.uri) {
         val keyFactory = factory.cacheKeyFactory
@@ -74,7 +84,7 @@ internal fun selectedHlsDownloader(request: DownloadRequest, quality: String, fa
     val keys = request.streamKeys.ifEmpty { selectedHlsStreamKeys(root, quality) }
     val item = request.toMediaItem().buildUpon().setStreamKeys(keys).build()
     val delegate = HlsDownloader.Factory(factory).setExecutor(executor).create(item)
-    val estimates = HlsSizeEstimator(requireNotNull(factory.cache), root, keys)
+    val estimates = HlsSizeEstimator(requireNotNull(factory.cache), root, keys, cachePrefix)
     return object : Downloader by delegate {
         override fun download(progressListener: Downloader.ProgressListener?) {
             // Restored downloads may already have enough cached fragments to provide an estimate.

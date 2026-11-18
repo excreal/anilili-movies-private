@@ -4,7 +4,6 @@ package com.example.animepahedl
 import androidx.media3.common.StreamKey
 import androidx.media3.common.util.UriUtil
 import androidx.media3.datasource.cache.Cache
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.ContentMetadata
 import kotlin.math.roundToLong
 
@@ -35,7 +34,7 @@ internal fun estimateSavedHlsSize(transfer: HlsTransferSample?, siblings: List<E
 }
 
 /** Samples completed media fragments from cache. Manifest bitrate and engine totals aren't output sizes. */
-internal class HlsSizeEstimator(private val cache: Cache, private val root: CachedHlsPlaylist, private val keys: List<StreamKey>) {
+internal class HlsSizeEstimator(private val cache: Cache, private val root: CachedHlsPlaylist, private val keys: List<StreamKey>, private val cachePrefix: String) {
     private data class Segment(val key: String, val offset: Long, val declaredLength: Long, val durationUs: Long)
     private data class Track(val durationUs: Long, val segments: List<Segment>)
     private var tracks: List<Track>? = null
@@ -47,12 +46,12 @@ internal class HlsSizeEstimator(private val cache: Cache, private val root: Cach
         if (now - lastSampleMs < 2_000L) return null
         lastSampleMs = now
         val selected = tracks ?: runCatching {
-            val factory = CacheDataSource.Factory().setCache(cache)
+            val factory = offlineCacheFactory(cache, cachePrefix)
             cachedHlsMediaPlaylists(root, keys, factory).takeIf { playlists ->
                 playlists.isNotEmpty() && playlists.all { it.hasEndTag && it.durationUs > 0 }
             }?.map { playlist ->
                 Track(playlist.durationUs, playlist.segments.map { segment ->
-                    Segment(UriUtil.resolve(playlist.baseUri, segment.url), segment.byteRangeOffset,
+                    Segment(cachePrefix + UriUtil.resolve(playlist.baseUri, segment.url), segment.byteRangeOffset,
                         segment.byteRangeLength, segment.durationUs)
                 })
             }?.also { tracks = it }

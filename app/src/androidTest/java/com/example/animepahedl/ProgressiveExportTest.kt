@@ -20,9 +20,10 @@ class ProgressiveExportTest {
         withCache { cache, output ->
             val bytes = ByteArray(16_384) { (it % 251).toByte() }
             val request = DownloadRequest.Builder("sites:test", "https://unreachable.invalid/video.mp4".toUri()).build()
-            write(cache, request, bytes)
+            val prefix = "offline/sites:test/"
+            write(cache, request, bytes, prefix)
             var copied = 0L
-            copyCachedProgressive(cache, request, bytes.size.toLong(), output) { copied = it }
+            copyCachedProgressive(cache, request, bytes.size.toLong(), output, prefix) { copied = it }
             assertArrayEquals(bytes, output.readBytes())
             assertEquals(bytes.size.toLong(), copied)
         }
@@ -39,9 +40,9 @@ class ProgressiveExportTest {
         }
     }
 
-    private fun write(cache: SimpleCache, request: DownloadRequest, bytes: ByteArray) {
+    private fun write(cache: SimpleCache, request: DownloadRequest, bytes: ByteArray, prefix: String = "") {
         val sink = CacheDataSink.Factory().setCache(cache).createDataSink()
-        sink.open(DataSpec.Builder().setUri(request.uri).setKey(request.uri.toString()).setLength(bytes.size.toLong()).build())
+        sink.open(DataSpec.Builder().setUri(request.uri).setKey(prefix + request.uri).setLength(bytes.size.toLong()).build())
         try { sink.write(bytes, 0, bytes.size) } finally { sink.close() }
     }
 

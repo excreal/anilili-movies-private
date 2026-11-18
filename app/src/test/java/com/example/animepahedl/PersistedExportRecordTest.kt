@@ -12,6 +12,8 @@ class PersistedExportRecordTest {
         assertTrue(record.folder.isEmpty())
         assertTrue(record.uri.isEmpty())
         assertTrue(record.error.isEmpty())
+        assertFalse(record.refreshMedia)
+        assertFalse(record.scopedCache)
         assertEquals(0L, record.bytes)
         assertEquals("Old video", parsePersistedExportRecord("""{"title":"Old video"}""")!!.title)
     }
@@ -50,7 +52,8 @@ class PersistedExportRecordTest {
                 Episode("ep", "2", "snapshot", "10m"), "720p", "und", "sites", "https://site.test/ep"),
             pendingUri = "content://downloads/43", media = ResolvedMedia("https://cdn.test/video", "720p", "und",
                 mapOf("Cookie" to "session=value"), listOf("https://backup.test/video"), "video/mp4",
-                listOf(MediaSubtitle("file:///caption.vtt", "English", "en", isDefault = true))))
+                listOf(MediaSubtitle("file:///caption.vtt", "English", "en", isDefault = true))),
+            refreshMedia = true, scopedCache = true)
         assertEquals(original, parsePersistedExportRecord(Gson().toJson(original)))
     }
 

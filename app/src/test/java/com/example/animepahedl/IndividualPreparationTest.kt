@@ -35,6 +35,21 @@ class IndividualPreparationTest {
         assertNotEquals(pendingEpisodeRowId(series, episodes[0], "720p"), pendingEpisodeRowId(series, episodes[0], "1080p"))
     }
 
+    @Test fun bestDoesNotReuseExplicitLowerQualityButMatchesAnExistingBestRequest() {
+        val pending = SiteDownloadPreparation(series, episodes.take(1), "Best")
+        val existing = DownloadRow("lower", "Episode", TransferState.DOWNLOADING, 20f,
+            showId = "sites:KISSKH:show", episodeId = episodes[0].id, quality = "480p", requestedQuality = "480p")
+        assertEquals(2, mergePreparedQueueRows(listOf(existing), pending, PreparationStatus(true)).size)
+        val bestRequest = existing.copy(requestedQuality = "Best")
+        assertEquals(1, mergePreparedQueueRows(listOf(bestRequest), pending, PreparationStatus(true)).size)
+
+        val best = DownloadIdentity.siteDownload(series, episodes[0], "Best", "und")
+        val lower = best.copy(quality = "480p")
+        val record = ExportRecord("Episode", "", "", identity = lower, quality = "480p")
+        assertFalse(matchesQueuedVideo(best, record, lower.key))
+        assertTrue(matchesQueuedVideo(best, record.copy(identity = lower.copy(quality = "Original")), "legacy"))
+    }
+
     @Test fun legacyMissingQueuedFieldRestoresAndSplitsChronologically() {
         val raw = Gson().toJson(SiteDownloadPreparation(series, episodes.reversed(), "Best"))
         val restored = parseSiteDownloadPreparation(raw)!!

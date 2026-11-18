@@ -7,7 +7,6 @@ import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSourceInputStream
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.cache.CacheDataSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -25,13 +24,14 @@ import kotlin.coroutines.coroutineContext
 
 /** Exposes only already-cached resources to FFmpeg, bound to loopback and protected by a random token. */
 @androidx.annotation.OptIn(UnstableApi::class)
-internal class CachedHlsServer(private val masterUri: String? = null, private val quality: String = "Best") : AutoCloseable {
+internal class CachedHlsServer(private val masterUri: String? = null, private val quality: String = "Best",
+    private val cachePrefix: String = "") : AutoCloseable {
     private val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     private val workers = java.util.concurrent.ThreadPoolExecutor(4, 4, 0, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue<Runnable>(8))
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     private val token = UUID.randomUUID().toString()
-    private val factory = CacheDataSource.Factory().setCache(OfflineDownloads.cache).setUpstreamDataSourceFactory(null)
+    private val factory = offlineCacheFactory(OfflineDownloads.cache, cachePrefix)
     private val acceptor = Thread({
         while (!socket.isClosed) {
             val client = try { socket.accept() } catch (_: IOException) { break }
@@ -85,7 +85,7 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                 val requestedRange = range
                 val playlistUri = uri == masterUri || uri.toUri().path.orEmpty().endsWith(".m3u8", ignoreCase = true)
                 if (requestedRange != null && !playlistUri) {
-                    val key = androidx.media3.datasource.cache.CacheKeyFactory.DEFAULT.buildCacheKey(
+                    val key = factory.cacheKeyFactory.buildCacheKey(
                         DataSpec.Builder().setUri(uri.toUri()).build())
                     val knownLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(
                         OfflineDownloads.cache.getContentMetadata(key))
@@ -136,7 +136,7 @@ internal class CachedHlsServer(private val masterUri: String? = null, private va
                         fun rewrite(value: String) = url(base.resolve(value).toString())
                         val original = String(bytes, Charsets.UTF_8)
                         val selected = if (uri == masterUri) selectCachedHlsVariant(original, quality) else original
-                        val normalized = normalizeCachedByteRanges(selected, base)
+                        val normalized = normalizeCachedByteRanges(selected, base, cachePrefix)
                         DebugTrace.event("cached_hls_playlist_served", "resource" to uri.hashCode().toUInt().toString(),
                             "master" to (uri == masterUri), "rangeRequested" to (range != null), "bytes" to bytes.size)
                         normalized.lineSequence().joinToString("\n") { line ->
@@ -196,7 +196,7 @@ private fun parseUnknownTotalRange(header: String): LongRange {
 }
 
 /** Clip impossible HLS byte ranges to the bytes the origin actually returned and cached. */
-private fun normalizeCachedByteRanges(playlist: String, base: URI): String {
+private fun normalizeCachedByteRanges(playlist: String, base: URI, cachePrefix: String): String {
     val lines = playlist.lines().toMutableList()
     val nextOffset = mutableMapOf<String, Long>()
     val byteRange = Regex("^#EXT-X-BYTERANGE:(\\d+)(?:@(\\d+))?$")
@@ -207,7 +207,7 @@ private fun normalizeCachedByteRanges(playlist: String, base: URI): String {
         val resource = runCatching { base.resolve(lines[uriIndex].trim()).toString() }.getOrNull() ?: continue
         val offset = match.groupValues[2].toLongOrNull() ?: nextOffset[resource] ?: 0L
         val total = androidx.media3.datasource.cache.ContentMetadata.getContentLength(
-            OfflineDownloads.cache.getContentMetadata(resource))
+            OfflineDownloads.cache.getContentMetadata(cachePrefix + resource))
         val available = if (total > 0 && offset < total) total - offset else length
         val actual = minOf(length, available)
         if (actual in 1 until length) lines[index] = "#EXT-X-BYTERANGE:$actual@$offset"
@@ -246,9 +246,10 @@ internal fun requireCachedHlsSegments(context: Context, id: String): CachedHlsMe
     val request = OfflineDownloads.manager(context).downloadIndex.getDownload(id)?.request?.forResolvedMedia(record?.media)
         ?: error("Temporary download is unavailable")
     val cache = OfflineDownloads.cache
-    val factory = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(null)
+    val cachePrefix = downloadCachePrefix(id, record)
+    val factory = offlineCacheFactory(cache, cachePrefix)
     fun resource(base: String, path: String, offset: Long = 0, length: Long = androidx.media3.common.C.LENGTH_UNSET.toLong()): Long {
-        val key = androidx.media3.common.util.UriUtil.resolve(base, path)
+        val key = cachePrefix + androidx.media3.common.util.UriUtil.resolve(base, path)
         val cachedResourceLength = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key))
         val remainingResourceLength = cachedResourceLength - offset
         // Some KissKH HLS manifests overstate the final EXT-X-BYTERANGE length. Their
@@ -307,7 +308,7 @@ internal suspend fun ffmpegRemuxCachedHls(context: Context, id: String, output: 
     val siteDownload = record?.identity?.isSiteDownload == true
     val durationUs = (source ?: requireCachedHlsSegments(context, id)).durationUs
     DebugTrace.event("export_started", "id" to id.hashCode().toUInt().toString(), "expectedDurationUs" to durationUs)
-    val server = CachedHlsServer(mediaUrl.takeIf { siteDownload }, record?.quality ?: "Best")
+    val server = CachedHlsServer(mediaUrl.takeIf { siteDownload }, record?.quality ?: "Best", downloadCachePrefix(id, record))
     val errors = File(context.cacheDir, "ffmpeg-${id.hashCode().toUInt()}.log")
     try {
         val args = listOf(executable.absolutePath, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-stats_period", "0.25", "-progress", "pipe:1",

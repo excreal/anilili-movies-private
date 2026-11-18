@@ -251,7 +251,7 @@ internal class SiteDownloadViewModel(application: Application) : AndroidViewMode
             if (added.isEmpty()) current else current.withBatches(batches + SiteDownloadBatch(record.series, added, record.quality))
         }
         preparationStatus = preparationStatus.copy(pending = true,
-            label = "${pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size} queued · preparing links in background",
+            label = "Queued",
             totalSelected = pending?.batches()?.sumOf { it.episodes.size } ?: record.episodes.size)
         preparationError = null
         viewModelScope.launch {

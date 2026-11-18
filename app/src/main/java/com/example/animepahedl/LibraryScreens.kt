@@ -343,7 +343,7 @@ internal fun DownloadsScreen(model: DownloaderViewModel, siteDownload: SiteDownl
                                     if (row.complete && !row.deleting) DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(R.string.ui_play)) }, onClick = { menu = false; onPlay(row) })
                                     if (DownloadAction.PAUSE in row.actions || DownloadAction.RESUME in row.actions) {
                                         val paused = DownloadAction.RESUME in row.actions
-                                        DropdownMenuItem(text = { Text(if (siteDownload.isPendingRow(row.id)) { if (paused) "Resume link preparation" else "Pause link preparation" } else if (paused) "Resume" else "Pause") }, onClick = {
+                                        DropdownMenuItem(text = { Text(if (paused) "Resume" else "Pause") }, onClick = {
                                             menu = false
                                             if (siteDownload.isPendingRow(row.id)) { if (paused) siteDownload.resumePending(row.id) else siteDownload.pausePending(row.id) }
                                             else if (paused) model.resumeDownload(row.id) else model.pauseDownload(row.id)

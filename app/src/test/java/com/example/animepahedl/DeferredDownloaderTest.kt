@@ -64,6 +64,23 @@ class DeferredDownloaderTest {
         assertEquals(1, refreshes)
     }
 
+    @Test fun media3RetryContinuesRenewalAfterTemporaryProviderFailure() {
+        val expired = java.io.IOException("CDN link expired")
+        val offline = java.io.IOException("Provider temporarily unavailable")
+        val original = Fake(expired)
+        val replacement = Fake()
+        var refreshes = 0
+        val item = DeferredDownloader({ original }, {}, {
+            if (++refreshes == 1) throw offline
+            replacement
+        }) { it === expired }
+        assertSame(offline, assertThrows(java.io.IOException::class.java) { item.download(null) })
+        item.download(null)
+        assertEquals(2, refreshes)
+        assertEquals(1, original.downloads)
+        assertEquals(1, replacement.downloads)
+    }
+
     @Test fun cancellationBeforeSetupDoesNotStartDownload() {
         val item = DeferredDownloader({ error("Must not initialize") }, {})
         item.cancel()
